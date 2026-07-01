@@ -30,7 +30,7 @@ export const rabbitMqQueueNode = defineNode({
     orderingRequired: true,
   },
   configSchema: z.object({
-    exchangeType: z.string(),
+    exchangeType: z.enum(["direct", "topic", "fanout", "headers"]),
     queueName: z.string(),
     durable: z.boolean(),
     maxQueueSize: z.number().nonnegative(),

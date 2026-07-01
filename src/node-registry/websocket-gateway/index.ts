@@ -20,7 +20,7 @@ export const websocketGatewayNode = defineNode({
     rooms: z.number().nonnegative(),
     averageMessageSizeBytes: z.number().nonnegative(),
     messagesPerSecond: z.number().nonnegative(),
-    broadcastMode: z.string(),
+    broadcastMode: z.enum(["direct", "room", "broadcast"]),
     memoryPerConnectionKb: z.number().nonnegative(),
   }),
   simulate: (config) => ({

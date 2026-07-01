@@ -44,6 +44,26 @@ const fieldDescriptions: Record<string, string> = {
   bandwidthMbps: "Maximum network transfer capacity in megabits per second.",
 }
 
+const selectOptions: Record<string, string[]> = {
+  "network.load-balancer.algorithm": ["round-robin", "least-connections", "weighted"],
+  "resilience.rate-limiter.strategy": ["token-bucket", "fixed-window", "sliding-window"],
+  "storage.object.operation": ["put", "get", "delete"],
+  "redis.cache.operation": ["read", "write", "read-write"],
+  "redis.cache.evictionPolicy": [
+    "noeviction",
+    "allkeys-lru",
+    "volatile-lru",
+    "allkeys-lfu",
+    "volatile-ttl",
+  ],
+  "rabbitmq.queue.exchangeType": ["direct", "topic", "fanout", "headers"],
+  "database.databaseType": ["postgresql", "mysql", "mongodb", "dynamodb", "cassandra"],
+  "database.operation": ["read", "insert", "update", "delete", "transaction"],
+  "http.endpoint.method": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+  "worker.ackMode": ["automatic", "manual", "none"],
+  "websocket.gateway.broadcastMode": ["direct", "room", "broadcast"],
+}
+
 function fieldGroup(key: string): string {
   if (/latency|timeout|delay|duration|interval|ttl|processing|backoff|lag/i.test(key)) {
     return "Timing"
@@ -109,7 +129,15 @@ export function ConfigForm({ node, definition, onSave }: ConfigFormProps) {
             <label htmlFor={`config-${key}`} key={key}>
               <span className="field-label">{key.replace(/([A-Z])/g, " $1")}</span>
               <small className="field-description">{describeField(key)}</small>
-              {typeof value === "boolean" ? (
+              {selectOptions[`${node.type}.${key}`] ? (
+                <select id={`config-${key}`} {...register(key)}>
+                  {selectOptions[`${node.type}.${key}`].map((option) => (
+                    <option value={option} key={option}>
+                      {option.replaceAll("-", " ")}
+                    </option>
+                  ))}
+                </select>
+              ) : typeof value === "boolean" ? (
                 <input id={`config-${key}`} type="checkbox" {...register(key)} />
               ) : typeof value === "object" ? (
                 <textarea

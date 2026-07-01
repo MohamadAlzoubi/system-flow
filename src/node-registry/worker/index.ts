@@ -55,7 +55,7 @@ export const workerNode = defineNode({
     processingJitterPercent: z.number().min(0).max(300),
     cpuCostPerJob: z.number().nonnegative(),
     memoryMbPerJob: z.number().nonnegative(),
-    ackMode: z.string(),
+    ackMode: z.enum(["automatic", "manual", "none"]),
     failureRate: z.number().min(0).max(0.99),
     retryCount: z.number().int().nonnegative(),
     retryBackoffMs: z.number().nonnegative(),

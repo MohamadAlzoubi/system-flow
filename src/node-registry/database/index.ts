@@ -29,8 +29,8 @@ export const databaseNode = defineNode({
     indexUsed: true,
   },
   configSchema: z.object({
-    databaseType: z.string(),
-    operation: z.string(),
+    databaseType: z.enum(["postgresql", "mysql", "mongodb", "dynamodb", "cassandra"]),
+    operation: z.enum(["read", "insert", "update", "delete", "transaction"]),
     averageQueryMs: z.number().nonnegative(),
     connectionPoolSize: z.number().nonnegative(),
     maxWritesPerSecond: z.number().nonnegative(),

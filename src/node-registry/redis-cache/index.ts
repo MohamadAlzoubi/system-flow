@@ -19,7 +19,7 @@ export const redisCacheNode = defineNode({
     evictionPolicy: "allkeys-lru",
   },
   configSchema: z.object({
-    operation: z.string(),
+    operation: z.enum(["read", "write", "read-write"]),
     keyPattern: z.string(),
     ttlSeconds: z.number().nonnegative(),
     hitRate: z.number().min(0).max(1),
@@ -27,12 +27,22 @@ export const redisCacheNode = defineNode({
     averageWriteMs: z.number().nonnegative(),
     maxMemoryMb: z.number().nonnegative(),
     itemSizeBytes: z.number().nonnegative(),
-    evictionPolicy: z.string(),
+    evictionPolicy: z.enum([
+      "noeviction",
+      "allkeys-lru",
+      "volatile-lru",
+      "allkeys-lfu",
+      "volatile-ttl",
+    ]),
   }),
   simulate: (config, context) => ({
     latencyMs:
-      number(config.averageReadMs) * number(config.hitRate) +
-      number(config.averageWriteMs) * (1 - number(config.hitRate)),
+      config.operation === "read"
+        ? number(config.averageReadMs)
+        : config.operation === "write"
+          ? number(config.averageWriteMs)
+          : number(config.averageReadMs) * number(config.hitRate) +
+            number(config.averageWriteMs) * (1 - number(config.hitRate)),
     cpuCores: 0.02,
     memoryMb: Math.min(
       number(config.maxMemoryMb),

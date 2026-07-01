@@ -652,4 +652,18 @@ describe("runSimulation", () => {
     )
     expect(recovered?.state).toBe("online")
   })
+
+  it("uses the selected Redis operation", () => {
+    const redis = nodeRegistry.get("redis.cache")
+    if (!redis) throw new Error("Registry requires Redis")
+    const context = {
+      profile: productViewedFlow.simulationProfile,
+      ratePerSecond: 100,
+    }
+    const read = redis.simulate({ ...redis.defaultConfig, operation: "read" }, context)
+    const write = redis.simulate({ ...redis.defaultConfig, operation: "write" }, context)
+
+    expect(read.latencyMs).toBe(2)
+    expect(write.latencyMs).toBe(4)
+  })
 })

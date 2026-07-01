@@ -16,7 +16,7 @@ export const httpEndpointNode = defineNode({
     averageLatencyMs: 40,
   },
   configSchema: z.object({
-    method: z.string(),
+    method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
     path: z.string(),
     timeoutMs: z.number().nonnegative(),
     authRequired: z.boolean(),

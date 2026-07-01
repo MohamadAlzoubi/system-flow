@@ -104,4 +104,18 @@ describe("validateFlow", () => {
       expect.objectContaining({ code: "DISCONNECTED_NODE", severity: "error" }),
     )
   })
+
+  it("rejects unsupported dropdown values", () => {
+    const graph = structuredClone(productViewedFlow)
+    const redis = graph.nodes.find((node) => node.type === "redis.cache")
+    if (!redis) throw new Error("Fixture requires Redis")
+    redis.config.operation = "invented-operation"
+
+    expect(validateFlow(graph, nodeRegistry)).toContainEqual(
+      expect.objectContaining({
+        code: "INVALID_CONFIG",
+        nodeId: redis.id,
+      }),
+    )
+  })
 })
