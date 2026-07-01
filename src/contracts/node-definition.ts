@@ -47,6 +47,24 @@ export type NodeSimulationResult = {
     readyAfterSeconds: number
     capacityPerReplica: number
   }
+  datastore?: {
+    effectiveOperationsPerSecond: number
+    connectionCapacityPerSecond: number
+    iopsCapacityPerSecond: number
+    readCapacityPerSecond: number
+    writeCapacityPerSecond: number
+    limitingResource: "connections" | "iops" | "reads" | "writes"
+    replicationLagMs: number
+    failoverSeconds: number
+  }
+  resilience?: {
+    availabilityPercent: number
+    rateLimitCapacityPerSecond: number
+    bulkheadCapacityPerSecond: number
+    circuitOpen: boolean
+    rejectedPerSecond: number
+    recoverySeconds: number
+  }
 }
 
 export type NodeDefinition = {

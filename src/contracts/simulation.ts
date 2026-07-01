@@ -45,6 +45,8 @@ export type NodeSimulationMetrics = {
   replicas?: number
   desiredReplicas?: number
   scaleReadySeconds?: number
+  datastore?: import("./node-definition").NodeSimulationResult["datastore"]
+  resilience?: import("./node-definition").NodeSimulationResult["resilience"]
 }
 
 export type QueueSimulationMetrics = {

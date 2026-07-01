@@ -201,4 +201,78 @@ describe("runSimulation", () => {
     expect(beforeReady?.scaling).toBe(true)
     expect(afterReady).toEqual(expect.objectContaining({ replicas: 6, scaling: false }))
   })
+
+  it("identifies the limiting datastore resource", () => {
+    const graph = structuredClone(productViewedFlow)
+    const source = graph.nodes[0]
+    const database = graph.nodes.find((node) => node.type === "database")
+    if (!database) throw new Error("Fixture requires a database")
+    source.config.ratePerSecond = 500
+    database.config.storageIops = 100
+    database.config.iopsPerOperation = 2
+    graph.nodes = [source, database]
+    graph.edges = [
+      {
+        id: "database-input",
+        fromNodeId: source.id,
+        toNodeId: database.id,
+        dataType: "ProductViewedEvent",
+      },
+    ]
+
+    const result = runSimulation(graph, nodeRegistry)
+    const metric = result.nodeMetrics.find((item) => item.nodeId === database.id)
+
+    expect(metric).toEqual(
+      expect.objectContaining({
+        acceptedRatePerSecond: 50,
+        datastore: expect.objectContaining({
+          limitingResource: "iops",
+          iopsCapacityPerSecond: 50,
+        }),
+      }),
+    )
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({ code: "DATASTORE_SATURATION" }),
+    )
+  })
+
+  it("models circuit-breaker and bulkhead rejection", () => {
+    const graph = structuredClone(productViewedFlow)
+    const source = graph.nodes[0]
+    const definition = nodeRegistry.get("external.api")
+    if (!definition) throw new Error("Registry requires external API")
+    const dependency = {
+      id: "dependency",
+      type: "external.api",
+      position: { x: 300, y: 100 },
+      config: { ...definition.defaultConfig, failureRate: 0.8 },
+    }
+    source.config.ratePerSecond = 500
+    graph.nodes = [source, dependency]
+    graph.edges = [
+      {
+        id: "dependency-call",
+        fromNodeId: source.id,
+        toNodeId: dependency.id,
+        dataType: "ProductViewedEvent",
+      },
+    ]
+
+    const result = runSimulation(graph, nodeRegistry)
+    const metric = result.nodeMetrics.find((item) => item.nodeId === dependency.id)
+
+    expect(metric?.resilience).toEqual(
+      expect.objectContaining({
+        circuitOpen: true,
+        recoverySeconds: 30,
+      }),
+    )
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({ code: "CIRCUIT_OPEN" }),
+    )
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({ code: "DEPENDENCY_REJECTION" }),
+    )
+  })
 })

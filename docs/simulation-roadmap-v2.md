@@ -63,6 +63,12 @@ failover.
 Acceptance: the simulator distinguishes query capacity, connection exhaustion,
 storage saturation, and replica consistency costs.
 
+Status: in progress. Database nodes now model read/write mix, cache hits, connection
+pool and maximum connections, storage IOPS, IOPS per operation, contention,
+transaction duration, read replicas, replication lag, primary availability, and
+failover duration. Results identify whether connections, IOPS, reads, or writes are
+the limiting resource.
+
 ## 6. Resilience and dependency behavior
 
 Add rate limiters, circuit breakers, bulkheads, load balancers, API gateways,
@@ -70,6 +76,11 @@ dependency quotas, recovery windows, and health-driven failover.
 
 Acceptance: scenario timelines demonstrate cascading failure, isolation, recovery,
 and bottleneck movement.
+
+Status: in progress. External API nodes now model rate-limit windows and quotas,
+bulkhead concurrency, circuit-breaker failure thresholds, open duration, recovery
+thresholds, availability, and rejected traffic. Simulation results distinguish
+circuit-open and dependency-rejection warnings.
 
 ## 7. Network and regional topology
 

@@ -60,9 +60,13 @@ export function SystemNode({ data, selected }: NodeProps) {
             ? `${serviceFrame.replicas}/${serviceFrame.desiredReplicas} replicas · ${serviceFrame.capacityPerSecond.toLocaleString()}/s`
             : queueFrame
               ? `${queueFrame.depth.toLocaleString()} queued · ${Math.round(queueFrame.averageMessageAgeMs / 1000)}s old`
-              : metrics
-                ? `${metrics.incomingRatePerSecond.toLocaleString()}/s · ${metrics.capacityPerSecond ? `${Math.round(metrics.utilizationPercent ?? 0)}%` : `${metrics.latencyMs} ms`}`
-                : String(data.subtitle || definition?.category)}
+              : metrics?.resilience
+                ? `${Math.round(metrics.resilience.availabilityPercent)}% available · ${Math.round(metrics.resilience.rejectedPerSecond)}/s rejected`
+                : metrics?.datastore
+                  ? `${metrics.datastore.limitingResource} · ${Math.round(metrics.capacityPerSecond ?? 0).toLocaleString()}/s`
+                  : metrics
+                    ? `${metrics.incomingRatePerSecond.toLocaleString()}/s · ${metrics.capacityPerSecond ? `${Math.round(metrics.utilizationPercent ?? 0)}%` : `${metrics.latencyMs} ms`}`
+                    : String(data.subtitle || definition?.category)}
         </small>
       </div>
       <Handle type="source" position={Position.Right} />

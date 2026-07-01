@@ -244,6 +244,8 @@ export function runSimulation(
       replicas: result.scaling?.initialReplicas,
       desiredReplicas: result.scaling?.desiredReplicas,
       scaleReadySeconds: result.scaling?.readyAfterSeconds,
+      datastore: result.datastore,
+      resilience: result.resilience,
     }
     nodeMetrics.push(nodeMetric)
 
@@ -279,6 +281,41 @@ export function runSimulation(
         severity: "warning",
         code: "MISSING_INDEX",
         message: "Database operation does not use an index",
+        nodeId,
+      })
+    }
+    if (
+      result.datastore &&
+      inputRate > (result.throughputPerSecond ?? Number.POSITIVE_INFINITY)
+    ) {
+      warnings.push({
+        severity: "warning",
+        code: "DATASTORE_SATURATION",
+        message: `${definition.label} is limited by ${result.datastore.limitingResource}`,
+        nodeId,
+      })
+    }
+    if (result.datastore && result.datastore.replicationLagMs > 1000) {
+      warnings.push({
+        severity: "warning",
+        code: "REPLICATION_LAG",
+        message: `${definition.label} replica lag is ${Math.round(result.datastore.replicationLagMs)} ms`,
+        nodeId,
+      })
+    }
+    if (result.resilience?.circuitOpen) {
+      warnings.push({
+        severity: "warning",
+        code: "CIRCUIT_OPEN",
+        message: `${definition.label} circuit breaker opens for ${result.resilience.recoverySeconds}s`,
+        nodeId,
+      })
+    }
+    if (result.resilience && result.resilience.rejectedPerSecond > 0) {
+      warnings.push({
+        severity: "warning",
+        code: "DEPENDENCY_REJECTION",
+        message: `${definition.label} rejects ${Math.round(result.resilience.rejectedPerSecond)}/s due to resilience limits`,
         nodeId,
       })
     }
