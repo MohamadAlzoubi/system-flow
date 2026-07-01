@@ -2,6 +2,7 @@ import {
   BarChart3,
   CheckCircle2,
   Download,
+  GraduationCap,
   PanelRight,
   Play,
   Trash2,
@@ -68,6 +69,16 @@ export function FlowToolbar() {
         {isDirty && <span className="dirty">Saved locally</span>}
       </div>
       <div className="actions">
+        <Button
+          variant="outline"
+          onClick={() => {
+            window.location.href = "/education"
+          }}
+          title="Open the education guide"
+        >
+          <GraduationCap size={16} />
+          Learn
+        </Button>
         <Button
           variant="outline"
           onClick={() => setInspectorOpen(!isInspectorOpen)}
