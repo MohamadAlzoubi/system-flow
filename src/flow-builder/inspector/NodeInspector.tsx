@@ -1,4 +1,4 @@
-import { Box, Cable } from "lucide-react"
+import { Box, Cable, X } from "lucide-react"
 import { nodeRegistry } from "../../node-registry"
 import { useFlowEditorStore } from "../../store/flow-editor.store"
 import { ConfigForm } from "./ConfigForm"
@@ -15,13 +15,23 @@ export function NodeInspector() {
     (state) => state.updateSimulationProfile,
   )
   const updateEdgeNetwork = useFlowEditorStore((state) => state.updateEdgeNetwork)
+  const setInspectorOpen = useFlowEditorStore((state) => state.setInspectorOpen)
   const node = graph.nodes.find((item) => item.id === selectedNodeId)
   const edge = graph.edges.find((item) => item.id === selectedEdgeId)
   const definition = node ? nodeRegistry.get(node.type) : undefined
 
   return (
     <aside className="inspector">
-      <h2>Inspector</h2>
+      <div className="inspector-head">
+        <h2>Inspector</h2>
+        <button
+          type="button"
+          onClick={() => setInspectorOpen(false)}
+          aria-label="Close inspector"
+        >
+          <X size={15} />
+        </button>
+      </div>
       {node && definition ? (
         <>
           <div className="inspector-title">

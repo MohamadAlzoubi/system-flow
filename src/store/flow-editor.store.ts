@@ -1,3 +1,4 @@
+import { z } from "zod"
 import { create } from "zustand"
 import type {
   FlowEdge,
@@ -24,6 +25,8 @@ type FlowEditorState = {
   simulationTimeSeconds: number
   validationIssues: ValidationIssue[]
   isDirty: boolean
+  isInspectorOpen: boolean
+  isAnalysisOpen: boolean
   setGraph: (graph: FlowGraph) => void
   setSelectedNode: (id: string | null) => void
   setSelectedEdge: (id: string | null) => void
@@ -45,10 +48,63 @@ type FlowEditorState = {
   captureSimulationBaseline: () => void
   clearSimulationBaseline: () => void
   setSimulationTimeSeconds: (timeSeconds: number) => void
+  setInspectorOpen: (open: boolean) => void
+  setAnalysisOpen: (open: boolean) => void
+}
+
+const storageKey = "system-flow.graph.v1"
+const savedGraphSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    nodes: z.array(
+      z
+        .object({
+          id: z.string(),
+          type: z.string(),
+          position: z.object({ x: z.number(), y: z.number() }),
+          config: z.record(z.string(), z.unknown()),
+        })
+        .passthrough(),
+    ),
+    edges: z.array(
+      z
+        .object({
+          id: z.string(),
+          fromNodeId: z.string(),
+          toNodeId: z.string(),
+          dataType: z.string(),
+        })
+        .passthrough(),
+    ),
+    dataContracts: z.array(z.unknown()),
+    simulationProfile: z
+      .object({
+        durationSeconds: z.number(),
+        cpuCores: z.number(),
+        memoryMb: z.number(),
+        networkLatencyMs: z.number(),
+        requestsPerSecond: z.number(),
+        trafficPattern: z.enum(["steady", "burst", "daily-peak", "random"]),
+      })
+      .passthrough(),
+  })
+  .passthrough()
+
+function loadSavedGraph(): FlowGraph {
+  if (typeof window === "undefined") return productViewedFlow
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(storageKey) ?? "null")
+    const parsed = savedGraphSchema.safeParse(value)
+    if (parsed.success) return parsed.data as FlowGraph
+  } catch {
+    // Ignore invalid or outdated local data and use the bundled example.
+  }
+  return productViewedFlow
 }
 
 export const useFlowEditorStore = create<FlowEditorState>((set) => ({
-  graph: productViewedFlow,
+  graph: loadSavedGraph(),
   selectedNodeId: null,
   selectedEdgeId: null,
   activePanel: "analysis",
@@ -58,6 +114,8 @@ export const useFlowEditorStore = create<FlowEditorState>((set) => ({
   simulationTimeSeconds: 0,
   validationIssues: [],
   isDirty: false,
+  isInspectorOpen: true,
+  isAnalysisOpen: false,
   setGraph: (graph) =>
     set({
       graph,
@@ -201,4 +259,12 @@ export const useFlowEditorStore = create<FlowEditorState>((set) => ({
   clearSimulationBaseline: () =>
     set({ simulationBaseline: null, simulationComparison: null }),
   setSimulationTimeSeconds: (simulationTimeSeconds) => set({ simulationTimeSeconds }),
+  setInspectorOpen: (isInspectorOpen) => set({ isInspectorOpen }),
+  setAnalysisOpen: (isAnalysisOpen) => set({ isAnalysisOpen }),
 }))
+
+if (typeof window !== "undefined") {
+  useFlowEditorStore.subscribe((state) => {
+    window.localStorage.setItem(storageKey, JSON.stringify(state.graph))
+  })
+}

@@ -1,4 +1,12 @@
-import { CheckCircle2, Download, Play, Trash2, Workflow } from "lucide-react"
+import {
+  BarChart3,
+  CheckCircle2,
+  Download,
+  PanelRight,
+  Play,
+  Trash2,
+  Workflow,
+} from "lucide-react"
 import { Button } from "../../components/ui/button"
 import { runSimulation, validateFlow } from "../../engine"
 import {
@@ -22,6 +30,9 @@ export function FlowToolbar() {
   const selectedEdgeId = useFlowEditorStore((state) => state.selectedEdgeId)
   const removeNodes = useFlowEditorStore((state) => state.removeNodes)
   const removeEdges = useFlowEditorStore((state) => state.removeEdges)
+  const isInspectorOpen = useFlowEditorStore((state) => state.isInspectorOpen)
+  const setInspectorOpen = useFlowEditorStore((state) => state.setInspectorOpen)
+  const setAnalysisOpen = useFlowEditorStore((state) => state.setAnalysisOpen)
 
   const exportFlow = () => {
     const blob = new Blob([JSON.stringify(graph, null, 2)], {
@@ -54,9 +65,25 @@ export function FlowToolbar() {
             </option>
           ))}
         </select>
-        {isDirty && <span className="dirty">Unsaved</span>}
+        {isDirty && <span className="dirty">Saved locally</span>}
       </div>
       <div className="actions">
+        <Button
+          variant="outline"
+          onClick={() => setInspectorOpen(!isInspectorOpen)}
+          title={isInspectorOpen ? "Close inspector" : "Open inspector"}
+        >
+          <PanelRight size={16} />
+          Inspector
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => setAnalysisOpen(true)}
+          title="Open simulation analysis"
+        >
+          <BarChart3 size={16} />
+          Analysis
+        </Button>
         <Button
           className="delete-action"
           variant="outline"
@@ -89,6 +116,7 @@ export function FlowToolbar() {
             const result = runSimulation(graph, nodeRegistry)
             setIssues(result.warnings)
             setResult(result)
+            setAnalysisOpen(true)
           }}
         >
           <Play size={16} />

@@ -3,17 +3,20 @@ import { NodeInspector } from "../flow-builder/inspector/NodeInspector"
 import { AnalysisPanel } from "../flow-builder/panels/AnalysisPanel"
 import { NodeLibrarySidebar } from "../flow-builder/sidebar/NodeLibrarySidebar"
 import { FlowToolbar } from "../flow-builder/toolbar/FlowToolbar"
+import { useFlowEditorStore } from "../store/flow-editor.store"
 
 export default function App() {
+  const isInspectorOpen = useFlowEditorStore((state) => state.isInspectorOpen)
+  const isAnalysisOpen = useFlowEditorStore((state) => state.isAnalysisOpen)
   return (
     <main>
       <FlowToolbar />
-      <div className="workspace">
+      <div className={`workspace ${isInspectorOpen ? "" : "inspector-closed"}`}>
         <NodeLibrarySidebar />
         <FlowCanvas />
-        <NodeInspector />
+        {isInspectorOpen && <NodeInspector />}
       </div>
-      <AnalysisPanel />
+      {isAnalysisOpen && <AnalysisPanel />}
     </main>
   )
 }

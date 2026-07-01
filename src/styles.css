@@ -43,7 +43,7 @@ select {
 main {
   height: 100vh;
   display: grid;
-  grid-template-rows: 52px 1fr 160px;
+  grid-template-rows: 52px 1fr;
 }
 
 header {
@@ -141,12 +141,34 @@ header {
   min-height: 0;
 }
 
+.workspace.inspector-closed {
+  grid-template-columns: 190px minmax(0, 1fr);
+}
+
 .palette,
 .inspector {
   background: hsl(var(--surface));
   overflow: auto;
   padding: 14px;
   border-right: 1px solid hsl(var(--border));
+}
+
+.inspector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.inspector-head button {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  color: hsl(var(--muted));
+  background: transparent;
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+  cursor: pointer;
 }
 
 .inspector {
@@ -388,6 +410,33 @@ h3 {
   text-transform: capitalize;
 }
 
+.config-group {
+  min-width: 0;
+  margin: 12px 0;
+  padding: 8px 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 7px;
+}
+
+.config-group legend {
+  padding: 0 5px;
+  color: hsl(var(--foreground));
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.field-label {
+  color: hsl(var(--foreground));
+  font-weight: 600;
+}
+
+.field-description {
+  color: hsl(var(--muted));
+  line-height: 1.35;
+  text-transform: none;
+}
+
 .inspector input[type="checkbox"] {
   width: auto;
   justify-self: start;
@@ -445,6 +494,47 @@ h3 {
   overflow: auto;
   background: hsl(var(--surface));
   border-top: 1px solid hsl(var(--border));
+}
+
+.analysis-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(5 8 14 / 72%);
+  backdrop-filter: blur(4px);
+}
+
+.analysis-modal {
+  width: min(960px, 94vw);
+  max-height: min(760px, 88vh);
+  padding: 18px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 55%);
+}
+
+.results-head {
+  position: sticky;
+  top: -18px;
+  z-index: 1;
+  padding: 12px 0;
+  background: hsl(var(--surface));
+}
+
+.modal-close {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  margin-left: auto;
+  color: hsl(var(--muted));
+  background: transparent;
+  border: 1px solid hsl(var(--border));
+  border-radius: 5px;
+  cursor: pointer;
 }
 
 .results-head span {
