@@ -82,7 +82,7 @@ export function FlowCanvas() {
           source: edge.fromNodeId,
           target: edge.toNodeId,
           label: metrics
-            ? `${edge.dataType} · ${metrics.ratePerSecond.toLocaleString()}/s`
+            ? `${edge.dataType} · ${metrics.ratePerSecond.toLocaleString()}/s${metrics.network ? ` · ${metrics.network.sourceRegion}→${metrics.network.targetRegion}` : ""}`
             : edge.dataType,
           animated: metrics?.status === "active",
           selected: edge.id === selectedEdgeId,

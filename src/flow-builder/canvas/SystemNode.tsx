@@ -6,13 +6,16 @@ import {
   Cloud,
   Cpu,
   Database,
+  Gauge,
   GitBranch,
   Globe2,
   HardDrive,
   Inbox,
   type LucideIcon,
+  Network,
   Radio,
   RadioTower,
+  Shield,
 } from "lucide-react"
 import type {
   NodeSimulationMetrics,
@@ -34,6 +37,9 @@ const icons: Record<string, LucideIcon> = {
   "external.api": Cloud,
   "scheduler.cron": Clock3,
   "logger.metrics": Activity,
+  "network.load-balancer": Network,
+  "resilience.rate-limiter": Gauge,
+  "resilience.circuit-breaker": Shield,
 }
 
 export function SystemNode({ data, selected }: NodeProps) {

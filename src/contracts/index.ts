@@ -1,5 +1,5 @@
 export type { DataContract } from "./data-contract"
-export type { FlowEdge, FlowGraph } from "./flow-graph"
+export type { EdgeNetworkPolicy, FlowEdge, FlowGraph } from "./flow-graph"
 export type {
   MergeMode,
   MergePolicy,

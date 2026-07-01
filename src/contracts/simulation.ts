@@ -99,6 +99,14 @@ export type EdgeSimulationMetrics = {
   percentageOfSourceTraffic: number
   status: "active" | "congested" | "inactive"
   latencyMs: number
+  network?: {
+    sourceRegion: string
+    targetRegion: string
+    transferLatencyMs: number
+    tlsLatencyMs: number
+    availabilityPercent: number
+    bandwidthCapacityPerSecond: number
+  }
 }
 
 export type SimulationBaseline = {

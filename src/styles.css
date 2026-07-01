@@ -316,6 +316,17 @@ h3 {
   --node-accent-soft: #37414a;
 }
 
+.node-network-load-balancer {
+  --node-accent: #63b3ed;
+  --node-accent-soft: #293f52;
+}
+
+.node-resilience-rate-limiter,
+.node-resilience-circuit-breaker {
+  --node-accent: #f6ad55;
+  --node-accent-soft: #4d3b29;
+}
+
 .delete-action:not(:disabled) {
   color: hsl(var(--danger));
   border-color: hsl(var(--danger) / 45%);

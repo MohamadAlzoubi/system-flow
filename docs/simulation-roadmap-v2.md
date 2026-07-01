@@ -89,6 +89,11 @@ zones, regions, cross-region cost, and partial network outages.
 
 Acceptance: latency and throughput respond to payload size, bandwidth, and placement.
 
+Status: in progress. Edges can now define source/target regions, bandwidth, base
+latency, TLS handshake cost, connection reuse, and partial outage. Payload size and
+bandwidth determine transfer latency and capacity; constrained edges report delivered
+versus requested traffic.
+
 ## 8. Production-oriented node catalog
 
 Add Kafka topics, load balancers, service clusters, object storage, CDNs, rate
@@ -97,6 +102,10 @@ proxies, read replicas, search engines, and autoscalers.
 
 Every node must follow the repository node checklist and represent backend behavior,
 not generic diagramming.
+
+Status: in progress. The catalog now includes deterministic Load Balancer, Rate
+Limiter, and Circuit Breaker nodes with strict schemas, realistic defaults,
+simulation behavior, registry discovery, and dedicated canvas icons.
 
 ## 9. Explanation and calibration
 

@@ -275,4 +275,97 @@ describe("runSimulation", () => {
       expect.objectContaining({ code: "DEPENDENCY_REJECTION" }),
     )
   })
+
+  it("models regional bandwidth, TLS, and outage constraints", () => {
+    const graph = structuredClone(productViewedFlow)
+    graph.nodes = [graph.nodes[0], graph.nodes[1]]
+    graph.edges = [
+      {
+        id: "regional-edge",
+        fromNodeId: graph.nodes[0].id,
+        toNodeId: graph.nodes[1].id,
+        dataType: "ProductViewedEvent",
+        network: {
+          sourceRegion: "eu-west",
+          targetRegion: "us-east",
+          bandwidthMbps: 0.01,
+          baseLatencyMs: 80,
+          tlsHandshakeMs: 100,
+          connectionReusePercent: 50,
+          outagePercent: 10,
+        },
+      },
+    ]
+
+    const result = runSimulation(graph, nodeRegistry)
+    const edge = result.edgeMetrics[0]
+
+    expect(edge.ratePerSecond).toBeCloseTo(1.04, 2)
+    expect(edge.network).toEqual(
+      expect.objectContaining({
+        sourceRegion: "eu-west",
+        targetRegion: "us-east",
+        transferLatencyMs: 960,
+        tlsLatencyMs: 50,
+        availabilityPercent: 90,
+      }),
+    )
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({ code: "NETWORK_CONSTRAINT" }),
+    )
+  })
+
+  it("simulates production resilience catalog nodes", () => {
+    const graph = structuredClone(productViewedFlow)
+    const source = graph.nodes[0]
+    const limiterDefinition = nodeRegistry.get("resilience.rate-limiter")
+    const breakerDefinition = nodeRegistry.get("resilience.circuit-breaker")
+    if (!limiterDefinition || !breakerDefinition) {
+      throw new Error("Registry requires resilience nodes")
+    }
+    source.config.ratePerSecond = 2000
+    const limiter = {
+      id: "limiter",
+      type: limiterDefinition.type,
+      position: { x: 300, y: 100 },
+      config: { ...limiterDefinition.defaultConfig },
+    }
+    const breaker = {
+      id: "breaker",
+      type: breakerDefinition.type,
+      position: { x: 500, y: 100 },
+      config: {
+        ...breakerDefinition.defaultConfig,
+        observedFailurePercent: 80,
+      },
+    }
+    graph.nodes = [source, limiter, breaker]
+    graph.edges = [
+      {
+        id: "limited",
+        fromNodeId: source.id,
+        toNodeId: limiter.id,
+        dataType: "ProductViewedEvent",
+      },
+      {
+        id: "protected",
+        fromNodeId: limiter.id,
+        toNodeId: breaker.id,
+        dataType: "ProductViewedEvent",
+      },
+    ]
+
+    const result = runSimulation(graph, nodeRegistry)
+
+    expect(result.nodeMetrics.find((metric) => metric.nodeId === limiter.id)).toEqual(
+      expect.objectContaining({
+        incomingRatePerSecond: 2000,
+        acceptedRatePerSecond: 1250,
+      }),
+    )
+    expect(
+      result.nodeMetrics.find((metric) => metric.nodeId === breaker.id)?.resilience
+        ?.circuitOpen,
+    ).toBe(true)
+  })
 })

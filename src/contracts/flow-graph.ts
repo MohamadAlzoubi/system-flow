@@ -10,6 +10,17 @@ export type FlowEdge = {
   condition?: string
   trafficPercentage?: number
   priority?: number
+  network?: EdgeNetworkPolicy
+}
+
+export type EdgeNetworkPolicy = {
+  sourceRegion: string
+  targetRegion: string
+  bandwidthMbps: number
+  baseLatencyMs: number
+  tlsHandshakeMs: number
+  connectionReusePercent: number
+  outagePercent: number
 }
 
 export type FlowGraph = {

@@ -71,6 +71,23 @@ export function validateFlow(
         edgeId: edge.id,
       })
     }
+    if (
+      edge.network &&
+      (edge.network.bandwidthMbps <= 0 ||
+        edge.network.connectionReusePercent < 0 ||
+        edge.network.connectionReusePercent > 100 ||
+        edge.network.outagePercent < 0 ||
+        edge.network.outagePercent > 100 ||
+        edge.network.baseLatencyMs < 0 ||
+        edge.network.tlsHandshakeMs < 0)
+    ) {
+      issues.push({
+        severity: "error",
+        code: "INVALID_NETWORK_POLICY",
+        message: "Edge network values are outside their valid ranges",
+        edgeId: edge.id,
+      })
+    }
   }
 
   const outgoing = new Map<string, typeof graph.edges>()

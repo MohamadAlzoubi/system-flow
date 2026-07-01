@@ -375,10 +375,30 @@ export function runSimulation(
         })
         percentage = healthy && index === firstHealthyIndex ? 100 : 0
       }
-      const edgeRate = acceptedRate * (percentage / 100)
+      const requestedEdgeRate = acceptedRate * (percentage / 100)
+      const dataSizeBytes =
+        graph.dataContracts.find((contract) => contract.name === edge.dataType)
+          ?.estimatedSizeBytes ?? 0
+      const network = edge.network
+      const availability = network ? 1 - network.outagePercent / 100 : 1
+      const bandwidthCapacity =
+        network && dataSizeBytes > 0
+          ? (network.bandwidthMbps * 1_000_000) / (dataSizeBytes * 8)
+          : Number.POSITIVE_INFINITY
+      const edgeRate = Math.min(requestedEdgeRate * availability, bandwidthCapacity)
+      const transferLatency =
+        network && dataSizeBytes > 0
+          ? (dataSizeBytes * 8 * 1000) / (network.bandwidthMbps * 1_000_000)
+          : 0
+      const tlsLatency = network
+        ? network.tlsHandshakeMs * (1 - network.connectionReusePercent / 100)
+        : 0
+      const networkLatency = network
+        ? network.baseLatencyMs + transferLatency + tlsLatency
+        : 0
       incomingContributions.set(edge.toNodeId, [
         ...(incomingContributions.get(edge.toNodeId) ?? []),
-        { rate: edgeRate, latencyMs: pathLatency },
+        { rate: edgeRate, latencyMs: pathLatency + networkLatency },
       ])
       edgeMetrics.push({
         edgeId: edge.id,
@@ -386,8 +406,26 @@ export function runSimulation(
         totalEvents: Math.round(edgeRate * profile.durationSeconds),
         percentageOfSourceTraffic: percentage,
         status: edgeRate === 0 ? "inactive" : droppedRate > 0 ? "congested" : "active",
-        latencyMs: round(pathLatency),
+        latencyMs: round(pathLatency + networkLatency),
+        network: network
+          ? {
+              sourceRegion: network.sourceRegion,
+              targetRegion: network.targetRegion,
+              transferLatencyMs: round(transferLatency),
+              tlsLatencyMs: round(tlsLatency),
+              availabilityPercent: round(availability * 100),
+              bandwidthCapacityPerSecond: round(bandwidthCapacity),
+            }
+          : undefined,
       })
+      if (network && edgeRate < requestedEdgeRate) {
+        warnings.push({
+          severity: "warning",
+          code: "NETWORK_CONSTRAINT",
+          message: `${network.sourceRegion} to ${network.targetRegion} network passes ${Math.round(edgeRate)}/${Math.round(requestedEdgeRate)} events/s`,
+          edgeId: edge.id,
+        })
+      }
     }
   }
 
