@@ -9,6 +9,14 @@ export type SimulationProfile = {
   networkLatencyMs: number
   requestsPerSecond: number
   trafficPattern: TrafficPattern
+  observedLatencyMs?: number
+  observedThroughputPerSecond?: number
+  peakRequestsPerSecond?: number
+  burstDurationSeconds?: number
+  rampUpSeconds?: number
+  payloadSizeBytes?: number
+  duplicateEventPercent?: number
+  malformedEventPercent?: number
 }
 
 export type SimulationResult = {
@@ -22,6 +30,26 @@ export type SimulationResult = {
   nodeMetrics: NodeSimulationMetrics[]
   edgeMetrics: EdgeSimulationMetrics[]
   timeline: SimulationFrame[]
+  explanation: SimulationExplanation
+}
+
+export type SimulationExplanation = {
+  confidence: "low" | "medium" | "high"
+  confidenceReasons: string[]
+  assumptions: string[]
+  recommendations: SimulationRecommendation[]
+  calibrated: boolean
+  calibrationFactors?: {
+    latency: number
+    throughput: number
+  }
+}
+
+export type SimulationRecommendation = {
+  code: string
+  priority: "high" | "medium" | "low"
+  message: string
+  nodeId?: string
 }
 
 export type SimulationStatus = "healthy" | "warning" | "critical" | "inactive"
@@ -61,6 +89,9 @@ export type QueueSimulationMetrics = {
   acknowledgedEvents: number
   deadLetterOverflowEvents: number
   averageMessageAgeMs: number
+  publisherConfirmedEvents: number
+  persistedBytes: number
+  activePartitions: number
   timeToSaturationSeconds?: number
 }
 
@@ -68,6 +99,26 @@ export type SimulationFrame = {
   timeSeconds: number
   queues: QueueFrameMetrics[]
   services: ServiceFrameMetrics[]
+  datastores: DataStoreFrameMetrics[]
+  resilience: ResilienceFrameMetrics[]
+}
+
+export type ResilienceFrameMetrics = {
+  nodeId: string
+  circuitState: "closed" | "open" | "half-open" | "recovered"
+  availabilityPercent: number
+  rejectedEvents: number
+  downstreamRatePerSecond: number
+}
+
+export type DataStoreFrameMetrics = {
+  nodeId: string
+  primaryState: "available" | "failing-over" | "recovered"
+  activeReadReplicas: number
+  connectionUtilizationPercent: number
+  iopsUtilizationPercent: number
+  replicationLagMs: number
+  contentionWaitMs: number
 }
 
 export type ServiceFrameMetrics = {
@@ -76,6 +127,8 @@ export type ServiceFrameMetrics = {
   desiredReplicas: number
   capacityPerSecond: number
   scaling: boolean
+  direction: "up" | "down" | "none"
+  limitingResource: "concurrency" | "in-flight" | "cpu" | "memory" | "timeout"
 }
 
 export type QueueFrameMetrics = {
@@ -90,6 +143,9 @@ export type QueueFrameMetrics = {
   acknowledgedEvents: number
   deadLetterOverflowEvents: number
   averageMessageAgeMs: number
+  publisherConfirmedEvents: number
+  persistedBytes: number
+  activePartitions: number
 }
 
 export type EdgeSimulationMetrics = {

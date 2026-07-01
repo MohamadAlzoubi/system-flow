@@ -65,6 +65,10 @@ export const databaseNode = defineNode({
     const connectionCapacity = (connections * 1000) / transactionMs
     const iopsCapacity = number(config.storageIops) / number(config.iopsPerOperation)
     const contentionFactor = 1 - number(config.contentionPercentage) / 100
+    const contentionWaitMs =
+      transactionMs *
+      (number(config.contentionPercentage) /
+        Math.max(1, 100 - number(config.contentionPercentage)))
     const readCapacity =
       (number(config.maxReadsPerSecond) * (1 + number(config.readReplicaCount))) /
       Math.max(readShare, 0.0001)
@@ -88,9 +92,7 @@ export const databaseNode = defineNode({
     const throughput = capacities[limitingResource] * availableFraction
     return {
       latencyMs:
-        transactionMs +
-        number(config.replicationLagMs) * readShare +
-        transactionMs * (number(config.contentionPercentage) / 100),
+        transactionMs + number(config.replicationLagMs) * readShare + contentionWaitMs,
       cpuCores: 0.2 + effectiveRate * 0.0001,
       memoryMb: connections * 2,
       throughputPerSecond: throughput / Math.max(cacheMissShare, 0.0001),
@@ -104,6 +106,12 @@ export const databaseNode = defineNode({
         replicationLagMs: number(config.replicationLagMs),
         failoverSeconds:
           config.primaryAvailable === true ? 0 : number(config.failoverSeconds),
+        connectionUtilizationPercent:
+          connectionCapacity > 0 ? (effectiveRate / connectionCapacity) * 100 : 0,
+        iopsUtilizationPercent:
+          iopsCapacity > 0 ? (effectiveRate / iopsCapacity) * 100 : 0,
+        contentionWaitMs,
+        readReplicaCount: number(config.readReplicaCount),
       },
     }
   },

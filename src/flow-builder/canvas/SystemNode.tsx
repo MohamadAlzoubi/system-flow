@@ -1,9 +1,12 @@
 import { Handle, type NodeProps, Position } from "@xyflow/react"
 import {
   Activity,
+  ArchiveX,
+  Boxes,
   Braces,
   Clock3,
   Cloud,
+  Copy,
   Cpu,
   Database,
   Gauge,
@@ -11,15 +14,23 @@ import {
   Globe2,
   HardDrive,
   Inbox,
+  Layers3,
   type LucideIcon,
   Network,
+  PackageOpen,
   Radio,
   RadioTower,
+  Scaling,
+  Search,
+  ServerCog,
   Shield,
+  Waves,
 } from "lucide-react"
 import type {
+  DataStoreFrameMetrics,
   NodeSimulationMetrics,
   QueueFrameMetrics,
+  ResilienceFrameMetrics,
   ServiceFrameMetrics,
 } from "../../contracts"
 import { nodeRegistry } from "../../node-registry"
@@ -40,6 +51,16 @@ const icons: Record<string, LucideIcon> = {
   "network.load-balancer": Network,
   "resilience.rate-limiter": Gauge,
   "resilience.circuit-breaker": Shield,
+  "stream.kafka-topic": Layers3,
+  "storage.object": PackageOpen,
+  "network.cdn": Network,
+  "data.search-engine": Search,
+  "compute.batch-processor": Boxes,
+  "data.database-proxy": ServerCog,
+  "data.read-replica": Copy,
+  "messaging.dead-letter-queue": ArchiveX,
+  "stream.processor": Waves,
+  "control.autoscaler": Scaling,
 }
 
 export function SystemNode({ data, selected }: NodeProps) {
@@ -50,6 +71,8 @@ export function SystemNode({ data, selected }: NodeProps) {
   const metrics = data.metrics as NodeSimulationMetrics | undefined
   const queueFrame = data.queueFrame as QueueFrameMetrics | undefined
   const serviceFrame = data.serviceFrame as ServiceFrameMetrics | undefined
+  const datastoreFrame = data.datastoreFrame as DataStoreFrameMetrics | undefined
+  const resilienceFrame = data.resilienceFrame as ResilienceFrameMetrics | undefined
 
   return (
     <div
@@ -63,16 +86,20 @@ export function SystemNode({ data, selected }: NodeProps) {
         <strong>{definition?.label}</strong>
         <small>
           {serviceFrame
-            ? `${serviceFrame.replicas}/${serviceFrame.desiredReplicas} replicas · ${serviceFrame.capacityPerSecond.toLocaleString()}/s`
-            : queueFrame
-              ? `${queueFrame.depth.toLocaleString()} queued · ${Math.round(queueFrame.averageMessageAgeMs / 1000)}s old`
-              : metrics?.resilience
-                ? `${Math.round(metrics.resilience.availabilityPercent)}% available · ${Math.round(metrics.resilience.rejectedPerSecond)}/s rejected`
-                : metrics?.datastore
-                  ? `${metrics.datastore.limitingResource} · ${Math.round(metrics.capacityPerSecond ?? 0).toLocaleString()}/s`
-                  : metrics
-                    ? `${metrics.incomingRatePerSecond.toLocaleString()}/s · ${metrics.capacityPerSecond ? `${Math.round(metrics.utilizationPercent ?? 0)}%` : `${metrics.latencyMs} ms`}`
-                    : String(data.subtitle || definition?.category)}
+            ? `${serviceFrame.replicas}/${serviceFrame.desiredReplicas} replicas · ${serviceFrame.limitingResource}`
+            : resilienceFrame
+              ? `${resilienceFrame.circuitState} · ${resilienceFrame.downstreamRatePerSecond.toLocaleString()}/s downstream`
+              : datastoreFrame
+                ? `${datastoreFrame.primaryState} · ${Math.round(datastoreFrame.connectionUtilizationPercent)}% connections`
+                : queueFrame
+                  ? `${queueFrame.depth.toLocaleString()} queued · ${queueFrame.activePartitions} partitions · ${Math.round(queueFrame.averageMessageAgeMs / 1000)}s old`
+                  : metrics?.resilience
+                    ? `${Math.round(metrics.resilience.availabilityPercent)}% available · ${Math.round(metrics.resilience.rejectedPerSecond)}/s rejected`
+                    : metrics?.datastore
+                      ? `${metrics.datastore.limitingResource} · ${Math.round(metrics.capacityPerSecond ?? 0).toLocaleString()}/s`
+                      : metrics
+                        ? `${metrics.incomingRatePerSecond.toLocaleString()}/s · ${metrics.capacityPerSecond ? `${Math.round(metrics.utilizationPercent ?? 0)}%` : `${metrics.latencyMs} ms`}`
+                        : String(data.subtitle || definition?.category)}
         </small>
       </div>
       <Handle type="source" position={Position.Right} />

@@ -11,6 +11,14 @@ const schema = z.object({
   cpuCores: z.number().positive(),
   memoryMb: z.number().positive(),
   networkLatencyMs: z.number().min(0),
+  observedLatencyMs: z.number().positive().optional(),
+  observedThroughputPerSecond: z.number().positive().optional(),
+  peakRequestsPerSecond: z.number().nonnegative().optional(),
+  burstDurationSeconds: z.number().nonnegative().optional(),
+  rampUpSeconds: z.number().nonnegative().optional(),
+  payloadSizeBytes: z.number().positive().optional(),
+  duplicateEventPercent: z.number().min(0).max(100).optional(),
+  malformedEventPercent: z.number().min(0).max(100).optional(),
 })
 
 type Props = {
@@ -24,6 +32,7 @@ export function SimulationProfileForm({ profile, onSave }: Props) {
     handleSubmit,
     formState: { errors },
     setError,
+    reset,
   } = useForm<SimulationProfile>({
     defaultValues: profile,
   })
@@ -42,6 +51,36 @@ export function SimulationProfileForm({ profile, onSave }: Props) {
 
   return (
     <form onSubmit={handleSubmit(submit)}>
+      <div className="scenario-presets">
+        <button
+          type="button"
+          onClick={() =>
+            reset({
+              ...profile,
+              trafficPattern: "steady",
+              peakRequestsPerSecond: profile.requestsPerSecond,
+              burstDurationSeconds: 0,
+              rampUpSeconds: 0,
+            })
+          }
+        >
+          Steady
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            reset({
+              ...profile,
+              trafficPattern: "burst",
+              peakRequestsPerSecond: profile.requestsPerSecond * 4,
+              burstDurationSeconds: 60,
+              rampUpSeconds: 30,
+            })
+          }
+        >
+          Traffic spike
+        </button>
+      </div>
       <label htmlFor="profile-duration">
         Duration (seconds)
         <Input
@@ -70,6 +109,56 @@ export function SimulationProfileForm({ profile, onSave }: Props) {
           <option value="random">Random</option>
         </select>
       </label>
+      <label htmlFor="profile-peak">
+        Peak traffic (events/second)
+        <Input
+          id="profile-peak"
+          type="number"
+          {...register("peakRequestsPerSecond", { valueAsNumber: true })}
+        />
+      </label>
+      <label htmlFor="profile-burst-duration">
+        Burst duration (seconds)
+        <Input
+          id="profile-burst-duration"
+          type="number"
+          {...register("burstDurationSeconds", { valueAsNumber: true })}
+        />
+      </label>
+      <label htmlFor="profile-ramp">
+        Ramp-up duration (seconds)
+        <Input
+          id="profile-ramp"
+          type="number"
+          {...register("rampUpSeconds", { valueAsNumber: true })}
+        />
+      </label>
+      <label htmlFor="profile-payload">
+        Payload size (bytes)
+        <Input
+          id="profile-payload"
+          type="number"
+          {...register("payloadSizeBytes", { valueAsNumber: true })}
+        />
+      </label>
+      <label htmlFor="profile-duplicates">
+        Duplicate events (%)
+        <Input
+          id="profile-duplicates"
+          type="number"
+          step="any"
+          {...register("duplicateEventPercent", { valueAsNumber: true })}
+        />
+      </label>
+      <label htmlFor="profile-malformed">
+        Malformed events (%)
+        <Input
+          id="profile-malformed"
+          type="number"
+          step="any"
+          {...register("malformedEventPercent", { valueAsNumber: true })}
+        />
+      </label>
       <label htmlFor="profile-cpu">
         CPU budget (cores)
         <Input
@@ -93,6 +182,26 @@ export function SimulationProfileForm({ profile, onSave }: Props) {
           id="profile-network"
           type="number"
           {...register("networkLatencyMs", { valueAsNumber: true })}
+        />
+      </label>
+      <label htmlFor="profile-observed-latency">
+        Observed latency (ms, optional)
+        <Input
+          id="profile-observed-latency"
+          type="number"
+          {...register("observedLatencyMs", {
+            setValueAs: (value) => (value === "" ? undefined : Number(value)),
+          })}
+        />
+      </label>
+      <label htmlFor="profile-observed-throughput">
+        Observed throughput (/s, optional)
+        <Input
+          id="profile-observed-throughput"
+          type="number"
+          {...register("observedThroughputPerSecond", {
+            setValueAs: (value) => (value === "" ? undefined : Number(value)),
+          })}
         />
       </label>
       <Button className="inspector-save" type="submit">

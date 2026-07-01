@@ -10,6 +10,20 @@ type ConfigFormProps = {
   onSave: (config: Record<string, unknown>) => void
 }
 
+const recommendedRanges: Record<string, string> = {
+  failureRate: "Recommended: 0–0.1",
+  concurrency: "Typical starting range: 1–100",
+  replicas: "Typical starting range: 1–20",
+  cpuLimitCores: "Typical range: 0.25–8 cores",
+  memoryLimitMb: "Typical range: 128–8192 MB",
+  timeoutMs: "Keep above expected p99 latency",
+  prefetch: "Typical range: 1–500 per consumer",
+  connectionPoolSize: "Keep below database maximum connections",
+  cacheHitPercentage: "Measure from production when possible",
+  bandwidthMbps: "Use the slowest real network segment",
+  outagePercent: "Use 0 for baseline; 1–20 for failure scenarios",
+}
+
 export function ConfigForm({ node, definition, onSave }: ConfigFormProps) {
   const {
     register,
@@ -69,6 +83,9 @@ export function ConfigForm({ node, definition, onSave }: ConfigFormProps) {
           )}
           {errors[key]?.message && (
             <small className="field-error">{String(errors[key]?.message)}</small>
+          )}
+          {recommendedRanges[key] && (
+            <small className="field-guidance">{recommendedRanges[key]}</small>
           )}
         </label>
       ))}

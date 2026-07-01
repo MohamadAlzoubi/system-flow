@@ -87,6 +87,8 @@ describe("runSimulation", () => {
     secondWorker.config.concurrency = 4
     firstWorker.config.concurrency = 2
     queue.routingPolicy = { mode: "competing-consumers" }
+    queue.config.orderingRequired = false
+    queue.config.partitions = 2
     graph.nodes = [graph.nodes[0], queue, firstWorker, secondWorker]
     graph.edges = [
       graph.edges[0],
@@ -210,6 +212,10 @@ describe("runSimulation", () => {
     source.config.ratePerSecond = 500
     database.config.storageIops = 100
     database.config.iopsPerOperation = 2
+    database.config.primaryAvailable = false
+    database.config.failoverSeconds = 30
+    database.config.readReplicaCount = 2
+    database.config.contentionPercentage = 20
     graph.nodes = [source, database]
     graph.edges = [
       {
@@ -225,7 +231,7 @@ describe("runSimulation", () => {
 
     expect(metric).toEqual(
       expect.objectContaining({
-        acceptedRatePerSecond: 50,
+        acceptedRatePerSecond: 45,
         datastore: expect.objectContaining({
           limitingResource: "iops",
           iopsCapacityPerSecond: 50,
@@ -235,6 +241,25 @@ describe("runSimulation", () => {
     expect(result.warnings).toContainEqual(
       expect.objectContaining({ code: "DATASTORE_SATURATION" }),
     )
+    const duringFailover = result.timeline
+      .find((frame) => frame.timeSeconds === 0)
+      ?.datastores.find((datastore) => datastore.nodeId === database.id)
+    const recovered = result.timeline
+      .find((frame) => frame.timeSeconds === 30)
+      ?.datastores.find((datastore) => datastore.nodeId === database.id)
+    expect(duringFailover).toEqual(
+      expect.objectContaining({
+        primaryState: "failing-over",
+        activeReadReplicas: 2,
+      }),
+    )
+    expect(recovered).toEqual(
+      expect.objectContaining({
+        primaryState: "recovered",
+        activeReadReplicas: 3,
+      }),
+    )
+    expect(metric?.datastore?.contentionWaitMs).toBeGreaterThan(0)
   })
 
   it("models circuit-breaker and bulkhead rejection", () => {
@@ -274,6 +299,23 @@ describe("runSimulation", () => {
     expect(result.warnings).toContainEqual(
       expect.objectContaining({ code: "DEPENDENCY_REJECTION" }),
     )
+    const open = result.timeline
+      .find((frame) => frame.timeSeconds === 0)
+      ?.resilience.find((item) => item.nodeId === dependency.id)
+    const halfOpen = result.timeline
+      .find((frame) => frame.timeSeconds === 25)
+      ?.resilience.find((item) => item.nodeId === dependency.id)
+    const recovered = result.timeline
+      .find((frame) => frame.timeSeconds === 30)
+      ?.resilience.find((item) => item.nodeId === dependency.id)
+    expect(open).toEqual(
+      expect.objectContaining({
+        circuitState: "open",
+        downstreamRatePerSecond: 0,
+      }),
+    )
+    expect(halfOpen?.circuitState).toBe("half-open")
+    expect(recovered?.circuitState).toBe("recovered")
   })
 
   it("models regional bandwidth, TLS, and outage constraints", () => {
@@ -367,5 +409,179 @@ describe("runSimulation", () => {
       result.nodeMetrics.find((metric) => metric.nodeId === breaker.id)?.resilience
         ?.circuitOpen,
     ).toBe(true)
+  })
+
+  it("explains confidence, calibration, and remediation", () => {
+    const graph = structuredClone(bottleneckFlow)
+    graph.simulationProfile.observedLatencyMs = 250
+    graph.simulationProfile.observedThroughputPerSecond = 1000
+
+    const result = runSimulation(graph, nodeRegistry)
+
+    expect(result.explanation).toEqual(
+      expect.objectContaining({
+        confidence: "high",
+        calibrated: true,
+      }),
+    )
+    expect(result.averageLatencyMs).toBe(250)
+    expect(result.totalEventsProcessed).toBe(300000)
+    expect(result.explanation.calibrationFactors).toEqual(
+      expect.objectContaining({
+        latency: expect.any(Number),
+        throughput: expect.any(Number),
+      }),
+    )
+    expect(result.explanation.assumptions.length).toBeGreaterThan(0)
+    expect(result.explanation.recommendations).toContainEqual(
+      expect.objectContaining({ code: "THROUGHPUT", priority: "high" }),
+    )
+  })
+
+  it("applies burst, ramp, peak, and payload scenario inputs", () => {
+    const graph = structuredClone(productViewedFlow)
+    graph.simulationProfile.trafficPattern = "burst"
+    graph.simulationProfile.peakRequestsPerSecond = 1500
+    graph.simulationProfile.burstDurationSeconds = 60
+    graph.simulationProfile.rampUpSeconds = 30
+    graph.simulationProfile.payloadSizeBytes = 2400
+    graph.nodes = [graph.nodes[0], graph.nodes[1]]
+    graph.edges = [
+      {
+        id: "scenario-network",
+        fromNodeId: graph.nodes[0].id,
+        toNodeId: graph.nodes[1].id,
+        dataType: "ProductViewedEvent",
+        network: {
+          sourceRegion: "eu",
+          targetRegion: "us",
+          bandwidthMbps: 1,
+          baseLatencyMs: 0,
+          tlsHandshakeMs: 0,
+          connectionReusePercent: 100,
+          outagePercent: 0,
+        },
+      },
+    ]
+
+    const result = runSimulation(graph, nodeRegistry)
+
+    expect(result.nodeMetrics[0].incomingRatePerSecond).toBe(750)
+    expect(result.edgeMetrics[0].network?.transferLatencyMs).toBe(19.2)
+  })
+
+  it("enforces worker timeout and models graceful scale down", () => {
+    const graph = structuredClone(productViewedFlow)
+    const source = graph.nodes[0]
+    const worker = graph.nodes.find((node) => node.type === "worker")
+    if (!worker) throw new Error("Fixture requires a worker")
+    source.config.ratePerSecond = 10
+    worker.config.replicas = 5
+    worker.config.autoscalingEnabled = true
+    worker.config.minReplicas = 1
+    worker.config.averageProcessingMs = 40000
+    worker.config.timeoutMs = 30000
+    graph.nodes = [source, worker]
+    graph.edges = [
+      {
+        id: "timed-worker",
+        fromNodeId: source.id,
+        toNodeId: worker.id,
+        dataType: "ProductViewedEvent",
+      },
+    ]
+
+    const result = runSimulation(graph, nodeRegistry)
+    const metric = result.nodeMetrics.find((item) => item.nodeId === worker.id)
+    const beforeDrain = result.timeline
+      .find((frame) => frame.timeSeconds === 60)
+      ?.services.find((service) => service.nodeId === worker.id)
+    const afterDrain = result.timeline
+      .find((frame) => frame.timeSeconds === 90)
+      ?.services.find((service) => service.nodeId === worker.id)
+
+    expect(metric).toEqual(
+      expect.objectContaining({
+        acceptedRatePerSecond: 0,
+        desiredReplicas: 1,
+      }),
+    )
+    expect(beforeDrain).toEqual(
+      expect.objectContaining({
+        replicas: 5,
+        direction: "down",
+        limitingResource: "timeout",
+      }),
+    )
+    expect(afterDrain?.replicas).toBe(1)
+  })
+
+  it("applies data-quality distributions and bounded retry policy", () => {
+    const graph = structuredClone(productViewedFlow)
+    graph.simulationProfile.duplicateEventPercent = 10
+    graph.simulationProfile.malformedEventPercent = 10
+
+    const result = runSimulation(graph, nodeRegistry)
+
+    expect(result.nodeMetrics[0].incomingRatePerSecond).toBe(495)
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({ code: "DATA_QUALITY" }),
+    )
+    const queue = result.nodeMetrics.find(
+      (metric) => metric.nodeId === graph.nodes[4].id,
+    )?.queue
+    expect(queue?.redeliveredEvents).toBeGreaterThan(0)
+  })
+
+  it("enforces broker partitions, ordering, bandwidth, and persistence", () => {
+    const graph = structuredClone(bottleneckFlow)
+    const queue = graph.nodes[1]
+    queue.config.orderingRequired = true
+    queue.config.partitions = 4
+    queue.config.bandwidthMbps = 0.1
+    queue.config.brokerStorageMb = 1
+    graph.simulationProfile.payloadSizeBytes = 1000
+
+    const result = runSimulation(graph, nodeRegistry)
+    const metrics = result.nodeMetrics.find((metric) => metric.nodeId === queue.id)?.queue
+
+    expect(metrics).toEqual(
+      expect.objectContaining({
+        activePartitions: 1,
+        maxDepth: expect.any(Number),
+      }),
+    )
+    expect(metrics?.maxDepth).toBeLessThanOrEqual(1049)
+    expect(metrics?.publisherConfirmedEvents).toBeGreaterThan(0)
+    expect(metrics?.persistedBytes).toBeGreaterThan(0)
+  })
+
+  it("registers deterministic production data-plane nodes", () => {
+    const expectedTypes = [
+      "stream.kafka-topic",
+      "storage.object",
+      "network.cdn",
+      "data.search-engine",
+      "compute.batch-processor",
+      "data.database-proxy",
+      "data.read-replica",
+      "messaging.dead-letter-queue",
+      "stream.processor",
+      "control.autoscaler",
+    ]
+    for (const type of expectedTypes) {
+      const definition = nodeRegistry.get(type)
+      expect(definition, `${type} should be registered`).toBeDefined()
+      expect(definition?.configSchema.safeParse(definition.defaultConfig).success).toBe(
+        true,
+      )
+    }
+
+    const kafka = nodeRegistry.get("stream.kafka-topic")
+    const result = kafka?.simulate(kafka.defaultConfig, {
+      profile: productViewedFlow.simulationProfile,
+      ratePerSecond: 1000,
+    })
+    expect(result?.throughputPerSecond).toBe(6000)
   })
 })

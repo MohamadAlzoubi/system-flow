@@ -41,6 +41,14 @@ export function FlowCanvas() {
     () => new Map(frame?.services.map((service) => [service.nodeId, service])),
     [frame],
   )
+  const datastoreFrames = useMemo(
+    () => new Map(frame?.datastores.map((datastore) => [datastore.nodeId, datastore])),
+    [frame],
+  )
+  const resilienceFrames = useMemo(
+    () => new Map(frame?.resilience.map((resilience) => [resilience.nodeId, resilience])),
+    [frame],
+  )
   const nodeMetrics = useMemo(
     () => new Map(result?.nodeMetrics.map((metric) => [metric.nodeId, metric])),
     [result],
@@ -63,9 +71,19 @@ export function FlowCanvas() {
           metrics: nodeMetrics.get(node.id),
           queueFrame: queueFrames.get(node.id),
           serviceFrame: serviceFrames.get(node.id),
+          datastoreFrame: datastoreFrames.get(node.id),
+          resilienceFrame: resilienceFrames.get(node.id),
         },
       })),
-    [graph.nodes, nodeMetrics, queueFrames, selectedNodeId, serviceFrames],
+    [
+      datastoreFrames,
+      graph.nodes,
+      nodeMetrics,
+      queueFrames,
+      resilienceFrames,
+      selectedNodeId,
+      serviceFrames,
+    ],
   )
   const edges = useMemo<Edge[]>(
     () =>

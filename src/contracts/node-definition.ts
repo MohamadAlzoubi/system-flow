@@ -41,11 +41,19 @@ export type NodeSimulationResult = {
   throughputPerSecond?: number
   outputType?: string
   retryAmplification?: number
+  retrySchedule?: {
+    retryCount: number
+    initialDelayMs: number
+    maximumDelayMs: number
+    jitterPercent: number
+  }
   scaling?: {
     initialReplicas: number
     desiredReplicas: number
     readyAfterSeconds: number
     capacityPerReplica: number
+    direction: "up" | "down" | "none"
+    limitingResource: "concurrency" | "in-flight" | "cpu" | "memory" | "timeout"
   }
   datastore?: {
     effectiveOperationsPerSecond: number
@@ -56,6 +64,10 @@ export type NodeSimulationResult = {
     limitingResource: "connections" | "iops" | "reads" | "writes"
     replicationLagMs: number
     failoverSeconds: number
+    connectionUtilizationPercent: number
+    iopsUtilizationPercent: number
+    contentionWaitMs: number
+    readReplicaCount: number
   }
   resilience?: {
     availabilityPercent: number

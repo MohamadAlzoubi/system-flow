@@ -35,6 +35,7 @@ type FlowEditorState = {
     mergeMode: NodeInstance["mergePolicy"],
   ) => void
   updateSimulationProfile: (profile: SimulationProfile) => void
+  updateEdgeNetwork: (id: string, network: FlowEdge["network"]) => void
   addNode: (type: string, position?: NodeInstance["position"]) => void
   addEdge: (edge: FlowEdge) => void
   removeNodes: (ids: string[]) => void
@@ -104,6 +105,19 @@ export const useFlowEditorStore = create<FlowEditorState>((set) => ({
   updateSimulationProfile: (simulationProfile) =>
     set((state) => ({
       graph: { ...state.graph, simulationProfile },
+      simulationResult: null,
+      simulationComparison: null,
+      validationIssues: [],
+      isDirty: true,
+    })),
+  updateEdgeNetwork: (id, network) =>
+    set((state) => ({
+      graph: {
+        ...state.graph,
+        edges: state.graph.edges.map((edge) =>
+          edge.id === id ? { ...edge, network } : edge,
+        ),
+      },
       simulationResult: null,
       simulationComparison: null,
       validationIssues: [],

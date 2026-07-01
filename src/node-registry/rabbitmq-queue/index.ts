@@ -23,6 +23,7 @@ export const rabbitMqQueueNode = defineNode({
     acknowledgementLatencyMs: 2,
     persistenceLatencyMs: 3,
     brokerMaxThroughputPerSecond: 10000,
+    maxThroughputPerPartition: 5000,
     brokerStorageMb: 1024,
     bandwidthMbps: 100,
     deadLetterMaxSize: 100000,
@@ -44,6 +45,7 @@ export const rabbitMqQueueNode = defineNode({
     acknowledgementLatencyMs: z.number().nonnegative(),
     persistenceLatencyMs: z.number().nonnegative(),
     brokerMaxThroughputPerSecond: z.number().positive(),
+    maxThroughputPerPartition: z.number().positive(),
     brokerStorageMb: z.number().positive(),
     bandwidthMbps: z.number().positive(),
     deadLetterMaxSize: z.number().nonnegative(),
@@ -56,6 +58,10 @@ export const rabbitMqQueueNode = defineNode({
       (config.durable === true ? Number(config.persistenceLatencyMs) : 0),
     cpuCores: 0.05 * Number(config.partitions),
     memoryMb: 32 * Number(config.partitions),
-    throughputPerSecond: Number(config.brokerMaxThroughputPerSecond),
+    throughputPerSecond: Math.min(
+      Number(config.brokerMaxThroughputPerSecond),
+      Number(config.maxThroughputPerPartition) *
+        (config.orderingRequired === true ? 1 : Number(config.partitions)),
+    ),
   }),
 })

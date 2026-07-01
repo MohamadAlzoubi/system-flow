@@ -16,6 +16,7 @@ export const workerNode = defineNode({
     autoscalingEnabled: false,
     scaleUpUtilizationPercent: 70,
     scalingDelaySeconds: 30,
+    scaleDownDelaySeconds: 60,
     coldStartSeconds: 10,
     cpuLimitCores: 2,
     memoryLimitMb: 512,
@@ -28,6 +29,11 @@ export const workerNode = defineNode({
     memoryMbPerJob: 20,
     ackMode: "manual",
     failureRate: 0.02,
+    retryCount: 3,
+    retryBackoffMs: 1000,
+    retryMaxBackoffMs: 30000,
+    retryJitterPercent: 20,
+    failureJitterPercent: 10,
   },
   configSchema: z.object({
     workerName: z.string(),
@@ -38,6 +44,7 @@ export const workerNode = defineNode({
     autoscalingEnabled: z.boolean(),
     scaleUpUtilizationPercent: z.number().positive().max(100),
     scalingDelaySeconds: z.number().nonnegative(),
+    scaleDownDelaySeconds: z.number().nonnegative(),
     coldStartSeconds: z.number().nonnegative(),
     cpuLimitCores: z.number().positive(),
     memoryLimitMb: z.number().positive(),
@@ -50,30 +57,56 @@ export const workerNode = defineNode({
     memoryMbPerJob: z.number().nonnegative(),
     ackMode: z.string(),
     failureRate: z.number().min(0).max(0.99),
+    retryCount: z.number().int().nonnegative(),
+    retryBackoffMs: z.number().nonnegative(),
+    retryMaxBackoffMs: z.number().nonnegative(),
+    retryJitterPercent: z.number().min(0).max(100),
+    failureJitterPercent: z.number().min(0).max(100),
   }),
   simulate: (config, context) => {
     const replicas = number(config.replicas)
-    const capacityPerReplica = Math.min(
-      (number(config.concurrency) * 1000) / number(config.averageProcessingMs),
-      (number(config.maxInFlight) * 1000) / number(config.averageProcessingMs),
-    )
+    const processingMs = number(config.averageProcessingMs)
+    const capacities = {
+      concurrency: (number(config.concurrency) * 1000) / processingMs,
+      "in-flight": (number(config.maxInFlight) * 1000) / processingMs,
+      cpu:
+        number(config.cpuCostPerJob) > 0
+          ? number(config.cpuLimitCores) / number(config.cpuCostPerJob)
+          : Number.POSITIVE_INFINITY,
+      memory:
+        number(config.memoryMbPerJob) > 0
+          ? (number(config.memoryLimitMb) / number(config.memoryMbPerJob)) *
+            (1000 / processingMs)
+          : Number.POSITIVE_INFINITY,
+      timeout: processingMs > number(config.timeoutMs) ? 0 : Number.POSITIVE_INFINITY,
+    }
+    const [limitingResource, capacityPerReplica] = (
+      Object.entries(capacities) as Array<[keyof typeof capacities, number]>
+    ).reduce((lowest, current) => (current[1] < lowest[1] ? current : lowest))
     const desiredReplicas =
-      config.autoscalingEnabled === true
-        ? Math.min(
-            number(config.maxReplicas),
-            Math.max(
-              number(config.minReplicas),
-              Math.ceil(
-                context.ratePerSecond /
-                  (capacityPerReplica * (number(config.scaleUpUtilizationPercent) / 100)),
+      limitingResource === "timeout"
+        ? number(config.minReplicas)
+        : config.autoscalingEnabled === true
+          ? Math.min(
+              number(config.maxReplicas),
+              Math.max(
+                number(config.minReplicas),
+                Math.ceil(
+                  context.ratePerSecond /
+                    (capacityPerReplica *
+                      (number(config.scaleUpUtilizationPercent) / 100)),
+                ),
               ),
-            ),
-          )
-        : replicas
+            )
+          : replicas
+    const direction =
+      desiredReplicas > replicas ? "up" : desiredReplicas < replicas ? "down" : "none"
     const readyAfterSeconds =
-      desiredReplicas > replicas
+      direction === "up"
         ? number(config.scalingDelaySeconds) + number(config.coldStartSeconds)
-        : 0
+        : direction === "down"
+          ? number(config.scaleDownDelaySeconds) + number(config.drainTimeSeconds)
+          : 0
     const scaledSeconds = Math.max(0, context.profile.durationSeconds - readyAfterSeconds)
     const effectiveReplicas =
       (replicas * Math.min(context.profile.durationSeconds, readyAfterSeconds) +
@@ -92,12 +125,22 @@ export const workerNode = defineNode({
         number(config.memoryMbPerJob) * number(config.concurrency) * effectiveReplicas,
       ),
       throughputPerSecond: throughput,
-      retryAmplification: 1 / (1 - number(config.failureRate)),
+      retryAmplification:
+        (1 - number(config.failureRate) ** (number(config.retryCount) + 1)) /
+        (1 - number(config.failureRate)),
+      retrySchedule: {
+        retryCount: number(config.retryCount),
+        initialDelayMs: number(config.retryBackoffMs),
+        maximumDelayMs: number(config.retryMaxBackoffMs),
+        jitterPercent: number(config.retryJitterPercent),
+      },
       scaling: {
         initialReplicas: replicas,
         desiredReplicas,
         readyAfterSeconds,
         capacityPerReplica,
+        direction,
+        limitingResource,
       },
     }
   },

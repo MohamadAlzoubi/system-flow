@@ -46,6 +46,15 @@ export function AnalysisPanel() {
   const clearBaseline = useFlowEditorStore((state) => state.clearSimulationBaseline)
   const [playing, setPlaying] = useState(false)
   const duration = result?.timeline.at(-1)?.timeSeconds ?? 0
+  const queueAgeSeries =
+    result?.timeline.flatMap((frame) =>
+      frame.queues.map((queue) => ({
+        nodeId: queue.nodeId,
+        time: frame.timeSeconds,
+        age: queue.averageMessageAgeMs,
+      })),
+    ) ?? []
+  const maximumQueueAge = Math.max(1, ...queueAgeSeries.map((point) => point.age))
 
   useEffect(() => {
     if (!playing || !result) return
@@ -148,6 +157,69 @@ export function AnalysisPanel() {
               {comparison.bottlenecks.moved && (
                 <span className="neutral">Bottleneck moved</span>
               )}
+            </div>
+          )}
+          <div className="explanation">
+            <span className={`confidence confidence-${result.explanation.confidence}`}>
+              {result.explanation.confidence} confidence
+              {result.explanation.calibrated ? " · calibrated" : ""}
+            </span>
+            <span>{result.explanation.confidenceReasons[0]}</span>
+          </div>
+          {queueAgeSeries.length > 0 && (
+            <div
+              className="message-age-chart"
+              role="img"
+              aria-label="Queue message age over time"
+            >
+              <strong>Message age</strong>
+              <div>
+                {queueAgeSeries.map((point) => (
+                  <i
+                    key={`${point.nodeId}-${point.time}`}
+                    title={`${point.time}s: ${Math.round(point.age)} ms`}
+                    style={{ height: `${(point.age / maximumQueueAge) * 100}%` }}
+                  />
+                ))}
+              </div>
+              <small>{Math.round(maximumQueueAge / 1000)}s maximum</small>
+            </div>
+          )}
+          <div className="node-capacity-list">
+            {result.nodeMetrics
+              .filter((metric) => metric.utilizationPercent !== undefined)
+              .map((metric) => (
+                <button
+                  type="button"
+                  key={metric.nodeId}
+                  onClick={() => setSelectedNode(metric.nodeId)}
+                >
+                  <span>{metric.nodeId}</span>
+                  <i>
+                    <b
+                      style={{
+                        width: `${Math.min(100, metric.utilizationPercent ?? 0)}%`,
+                      }}
+                    />
+                  </i>
+                  <small>{Math.round(metric.utilizationPercent ?? 0)}%</small>
+                </button>
+              ))}
+          </div>
+          {result.explanation.recommendations.length > 0 && (
+            <div className="recommendations">
+              {result.explanation.recommendations.map((recommendation, index) => (
+                <button
+                  type="button"
+                  key={`${recommendation.code}-${recommendation.nodeId ?? index}`}
+                  onClick={() => {
+                    if (recommendation.nodeId) setSelectedNode(recommendation.nodeId)
+                  }}
+                >
+                  <strong>{recommendation.priority}</strong>
+                  {recommendation.message}
+                </button>
+              ))}
             </div>
           )}
         </>

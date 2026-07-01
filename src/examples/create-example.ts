@@ -8,6 +8,12 @@ const profile = {
   networkLatencyMs: 5,
   requestsPerSecond: 500,
   trafficPattern: "steady" as const,
+  peakRequestsPerSecond: 1500,
+  burstDurationSeconds: 60,
+  rampUpSeconds: 30,
+  payloadSizeBytes: 1200,
+  duplicateEventPercent: 0,
+  malformedEventPercent: 0,
 }
 
 export function createExampleFlow(

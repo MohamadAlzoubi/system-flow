@@ -1,18 +1,22 @@
-import { Box } from "lucide-react"
+import { Box, Cable } from "lucide-react"
 import { nodeRegistry } from "../../node-registry"
 import { useFlowEditorStore } from "../../store/flow-editor.store"
 import { ConfigForm } from "./ConfigForm"
+import { EdgeNetworkForm } from "./EdgeNetworkForm"
 import { SimulationProfileForm } from "./SimulationProfileForm"
 
 export function NodeInspector() {
   const graph = useFlowEditorStore((state) => state.graph)
   const selectedNodeId = useFlowEditorStore((state) => state.selectedNodeId)
+  const selectedEdgeId = useFlowEditorStore((state) => state.selectedEdgeId)
   const updateNodeConfig = useFlowEditorStore((state) => state.updateNodeConfig)
   const updateNodePolicies = useFlowEditorStore((state) => state.updateNodePolicies)
   const updateSimulationProfile = useFlowEditorStore(
     (state) => state.updateSimulationProfile,
   )
+  const updateEdgeNetwork = useFlowEditorStore((state) => state.updateEdgeNetwork)
   const node = graph.nodes.find((item) => item.id === selectedNodeId)
+  const edge = graph.edges.find((item) => item.id === selectedEdgeId)
   const definition = node ? nodeRegistry.get(node.type) : undefined
 
   return (
@@ -79,6 +83,24 @@ export function NodeInspector() {
               ))}
             </select>
           </label>
+        </>
+      ) : edge ? (
+        <>
+          <div className="inspector-title">
+            <Cable size={17} />
+            <div>
+              <strong>{edge.dataType}</strong>
+              <small>
+                {edge.fromNodeId} → {edge.toNodeId}
+              </small>
+            </div>
+          </div>
+          <h3>Network topology</h3>
+          <EdgeNetworkForm
+            key={edge.id}
+            edge={edge}
+            onSave={(network) => updateEdgeNetwork(edge.id, network)}
+          />
         </>
       ) : (
         <>
