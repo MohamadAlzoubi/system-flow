@@ -17,6 +17,16 @@ export const rabbitMqQueueNode = defineNode({
     retryDelayMs: 5000,
     deadLetterQueue: true,
     prefetch: 10,
+    partitions: 1,
+    consumerGroup: "default",
+    publisherConfirmLatencyMs: 2,
+    acknowledgementLatencyMs: 2,
+    persistenceLatencyMs: 3,
+    brokerMaxThroughputPerSecond: 10000,
+    brokerStorageMb: 1024,
+    bandwidthMbps: 100,
+    deadLetterMaxSize: 100000,
+    orderingRequired: true,
   },
   configSchema: z.object({
     exchangeType: z.string(),
@@ -28,6 +38,24 @@ export const rabbitMqQueueNode = defineNode({
     retryDelayMs: z.number().nonnegative(),
     deadLetterQueue: z.boolean(),
     prefetch: z.number().nonnegative(),
+    partitions: z.number().int().positive(),
+    consumerGroup: z.string().min(1),
+    publisherConfirmLatencyMs: z.number().nonnegative(),
+    acknowledgementLatencyMs: z.number().nonnegative(),
+    persistenceLatencyMs: z.number().nonnegative(),
+    brokerMaxThroughputPerSecond: z.number().positive(),
+    brokerStorageMb: z.number().positive(),
+    bandwidthMbps: z.number().positive(),
+    deadLetterMaxSize: z.number().nonnegative(),
+    orderingRequired: z.boolean(),
   }),
-  simulate: () => ({ latencyMs: 5, cpuCores: 0.05, memoryMb: 32 }),
+  simulate: (config) => ({
+    latencyMs:
+      Number(config.publisherConfirmLatencyMs) +
+      Number(config.acknowledgementLatencyMs) +
+      (config.durable === true ? Number(config.persistenceLatencyMs) : 0),
+    cpuCores: 0.05 * Number(config.partitions),
+    memoryMb: 32 * Number(config.partitions),
+    throughputPerSecond: Number(config.brokerMaxThroughputPerSecond),
+  }),
 })

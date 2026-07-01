@@ -35,6 +35,7 @@ export type SimulationContext = {
 
 export type NodeSimulationResult = {
   latencyMs: number
+  latencyStdDevMs?: number
   cpuCores: number
   memoryMb: number
   throughputPerSecond?: number

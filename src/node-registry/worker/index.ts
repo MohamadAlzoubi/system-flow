@@ -23,6 +23,7 @@ export const workerNode = defineNode({
     timeoutMs: 30000,
     drainTimeSeconds: 30,
     averageProcessingMs: 80,
+    processingJitterPercent: 25,
     cpuCostPerJob: 0.005,
     memoryMbPerJob: 20,
     ackMode: "manual",
@@ -44,6 +45,7 @@ export const workerNode = defineNode({
     timeoutMs: z.number().positive(),
     drainTimeSeconds: z.number().nonnegative(),
     averageProcessingMs: z.number().positive(),
+    processingJitterPercent: z.number().min(0).max(300),
     cpuCostPerJob: z.number().nonnegative(),
     memoryMbPerJob: z.number().nonnegative(),
     ackMode: z.string(),
@@ -80,6 +82,9 @@ export const workerNode = defineNode({
     const throughput = capacityPerReplica * effectiveReplicas
     return {
       latencyMs: number(config.averageProcessingMs),
+      latencyStdDevMs:
+        number(config.averageProcessingMs) *
+        (number(config.processingJitterPercent) / 100),
       cpuCores:
         number(config.cpuCostPerJob) * Math.min(context.ratePerSecond, throughput),
       memoryMb: Math.min(

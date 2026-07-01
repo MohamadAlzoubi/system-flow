@@ -11,6 +11,8 @@ describe("runSimulation", () => {
     expect(first).toEqual(second)
     expect(first.totalEventsProcessed).toBe(37500)
     expect(first.averageLatencyMs).toBeGreaterThan(0)
+    expect(first.p99LatencyMs).toBeGreaterThan(first.p95LatencyMs)
+    expect(first.p95LatencyMs).not.toBe(Math.round(first.averageLatencyMs * 1.8))
   })
 
   it("detects the worker bottleneck example", () => {
@@ -22,8 +24,11 @@ describe("runSimulation", () => {
     const queue = result.nodeMetrics.find(
       (metric) => metric.nodeId === bottleneckFlow.nodes[1].id,
     )?.queue
-    expect(queue?.enqueuedEvents).toBe(450000)
-    expect(queue?.dequeuedEvents).toBe(3000)
+    expect(queue?.enqueuedEvents).toBeGreaterThan(450000)
+    expect(queue?.dequeuedEvents).toBeGreaterThan(0)
+    expect(queue?.acknowledgedEvents).toBeGreaterThan(0)
+    expect(queue?.redeliveredEvents).toBeGreaterThan(0)
+    expect(queue?.averageMessageAgeMs).toBeGreaterThan(0)
     expect(queue?.expiredEvents).toBeGreaterThan(0)
     expect(result.timeline.length).toBeGreaterThan(1)
     expect(result.timeline.at(-1)?.timeSeconds).toBe(

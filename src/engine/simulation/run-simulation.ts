@@ -15,6 +15,34 @@ const number = (value: unknown) => Number(value)
 const round = (value: number) => Number(value.toFixed(2))
 type Contribution = { rate: number; latencyMs: number }
 
+function seedFrom(value: string): number {
+  let seed = 2166136261
+  for (const character of value) {
+    seed ^= character.charCodeAt(0)
+    seed = Math.imul(seed, 16777619)
+  }
+  return seed >>> 0
+}
+
+function createRandom(seed: number): () => number {
+  let state = seed || 1
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0
+    return state / 4294967296
+  }
+}
+
+function normalSample(random: () => number): number {
+  const first = Math.max(random(), Number.EPSILON)
+  const second = random()
+  return Math.sqrt(-2 * Math.log(first)) * Math.cos(2 * Math.PI * second)
+}
+
+function percentile(values: number[], fraction: number): number {
+  const sorted = [...values].sort((left, right) => left - right)
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))]
+}
+
 function mergeContributions(
   contributions: Contribution[],
   mode: "sum" | "wait-all" | "first-response" | "asynchronous",
@@ -92,6 +120,7 @@ export function runSimulation(
   let cpu = 0
   let memory = 0
   let endToEndLatency = 0
+  let latencyVariance = 0
   const timeline: SimulationFrame[] = []
   const scalingServices = new Map<string, NonNullable<NodeSimulationResult["scaling"]>>()
   const queueRates = new Map<
@@ -102,6 +131,12 @@ export function runSimulation(
       maxSize: number
       ttlSeconds: number
       deadLetter: boolean
+      deadLetterMaxSize: number
+      retryCount: number
+      retryDelaySeconds: number
+      failureRate: number
+      acknowledgementLatencyMs: number
+      brokerCapacity: number
     }
   >()
 
@@ -122,6 +157,7 @@ export function runSimulation(
         )
     const inputRate = merged.rate
     const result = definition.simulate(node.config, { profile, ratePerSecond: inputRate })
+    latencyVariance += (result.latencyStdDevMs ?? 0) ** 2
     if (result.scaling) scalingServices.set(nodeId, result.scaling)
     const capacity = result.throughputPerSecond
     let acceptedRate = capacity === undefined ? inputRate : Math.min(inputRate, capacity)
@@ -146,13 +182,30 @@ export function runSimulation(
           sum + Math.min(targetResult.throughputPerSecond ?? inputRate, prefetchCapacity)
         )
       }, 0)
-      acceptedRate = Math.min(inputRate, consumerCapacity || inputRate)
+      const brokerCapacity = number(node.config.brokerMaxThroughputPerSecond)
+      acceptedRate = Math.min(inputRate, consumerCapacity || inputRate, brokerCapacity)
+      const consumers = (outgoing.get(nodeId) ?? [])
+        .map((edge) => nodes.get(edge.toNodeId))
+        .filter((target) => target !== undefined)
+      const failureRate =
+        consumers.length === 0
+          ? 0
+          : consumers.reduce(
+              (sum, target) => sum + (number(target.config.failureRate) || 0),
+              0,
+            ) / consumers.length
       queueRates.set(nodeId, {
         incoming: inputRate,
         outgoing: acceptedRate,
         maxSize: number(node.config.maxQueueSize),
         ttlSeconds: number(node.config.messageTtlMs) / 1000,
         deadLetter: node.config.deadLetterQueue === true,
+        deadLetterMaxSize: number(node.config.deadLetterMaxSize),
+        retryCount: number(node.config.retryCount),
+        retryDelaySeconds: number(node.config.retryDelayMs) / 1000,
+        failureRate,
+        acknowledgementLatencyMs: number(node.config.acknowledgementLatencyMs),
+        brokerCapacity,
       })
     }
     const utilization =
@@ -316,10 +369,25 @@ export function runSimulation(
         expiredEvents: 0,
         deadLetteredEvents: 0,
         overflowEvents: 0,
+        redeliveredEvents: 0,
+        acknowledgedEvents: 0,
+        deadLetterOverflowEvents: 0,
+        averageMessageAgeMs: 0,
       }
-      const enqueued = rates.incoming * elapsed
+      const retryEligible =
+        rates.retryDelaySeconds <= 0
+          ? rates.retryCount
+          : Math.min(rates.retryCount, elapsed / rates.retryDelaySeconds)
+      const redelivered =
+        rates.outgoing * rates.failureRate * Math.max(0, retryEligible) * elapsed
+      const enqueued = rates.incoming * elapsed + redelivered
       const available = previous.depth + enqueued
-      const dequeued = Math.min(available, rates.outgoing * elapsed)
+      const acknowledgementFactor =
+        1 + rates.acknowledgementLatencyMs / Math.max(1, elapsed * 1000)
+      const dequeued = Math.min(
+        available,
+        (rates.outgoing / acknowledgementFactor) * elapsed,
+      )
       let depth = Math.max(0, available - dequeued)
       const ttlLimit =
         rates.ttlSeconds > 0
@@ -329,16 +397,30 @@ export function runSimulation(
       depth -= expired
       const overflow = Math.max(0, depth - rates.maxSize)
       depth -= overflow
+      const deadLettered = rates.deadLetter ? expired + overflow : 0
+      const deadLetterSpace = Math.max(
+        0,
+        rates.deadLetterMaxSize - previous.deadLetteredEvents,
+      )
+      const acceptedDeadLetters = Math.min(deadLettered, deadLetterSpace)
+      const deadLetterOverflow = Math.max(0, deadLettered - acceptedDeadLetters)
       const next = {
         nodeId,
         depth: Math.round(depth),
         enqueuedEvents: Math.round(previous.enqueuedEvents + enqueued),
         dequeuedEvents: Math.round(previous.dequeuedEvents + dequeued),
         expiredEvents: Math.round(previous.expiredEvents + expired),
-        deadLetteredEvents: Math.round(
-          previous.deadLetteredEvents + (rates.deadLetter ? expired + overflow : 0),
-        ),
+        deadLetteredEvents: Math.round(previous.deadLetteredEvents + acceptedDeadLetters),
         overflowEvents: Math.round(previous.overflowEvents + overflow),
+        redeliveredEvents: Math.round(previous.redeliveredEvents + redelivered),
+        acknowledgedEvents: Math.round(
+          previous.acknowledgedEvents + dequeued * (1 - rates.failureRate),
+        ),
+        deadLetterOverflowEvents: Math.round(
+          previous.deadLetterOverflowEvents + deadLetterOverflow,
+        ),
+        averageMessageAgeMs:
+          rates.incoming > 0 ? Math.round((depth / rates.incoming) * 1000) : 0,
       }
       queueState.set(nodeId, next)
       queues.push(next)
@@ -383,6 +465,10 @@ export function runSimulation(
       expiredEvents: finalQueue.expiredEvents,
       deadLetteredEvents: finalQueue.deadLetteredEvents,
       overflowEvents: finalQueue.overflowEvents,
+      redeliveredEvents: finalQueue.redeliveredEvents,
+      acknowledgedEvents: finalQueue.acknowledgedEvents,
+      deadLetterOverflowEvents: finalQueue.deadLetterOverflowEvents,
+      averageMessageAgeMs: finalQueue.averageMessageAgeMs,
       timeToSaturationSeconds: growth > 0 ? round(rates.maxSize / growth) : undefined,
     }
     if (finalQueue.expiredEvents > 0 || finalQueue.overflowEvents > 0) {
@@ -408,13 +494,21 @@ export function runSimulation(
       message: `Estimated memory ${Math.round(memory)} MB exceeds ${profile.memoryMb} MB`,
     })
 
+  const random = createRandom(
+    seedFrom(`${graph.id}:${profile.durationSeconds}:${profile.requestsPerSecond}`),
+  )
+  const latencyDeviation = Math.sqrt(latencyVariance)
+  const latencySamples = Array.from({ length: 1000 }, () =>
+    Math.max(0, endToEndLatency + normalSample(random) * latencyDeviation),
+  )
+
   return {
     totalEventsProcessed: nodeMetrics
       .filter((metric) => (outgoing.get(metric.nodeId) ?? []).length === 0)
       .reduce((sum, metric) => sum + metric.processedEvents, 0),
     averageLatencyMs: Math.round(endToEndLatency),
-    p95LatencyMs: Math.round(endToEndLatency * 1.8),
-    p99LatencyMs: Math.round(endToEndLatency * 2.7),
+    p95LatencyMs: Math.round(percentile(latencySamples, 0.95)),
+    p99LatencyMs: Math.round(percentile(latencySamples, 0.99)),
     bottlenecks: warnings.filter(
       (issue) => issue.code === "THROUGHPUT" || issue.code.includes("SATURATION"),
     ),

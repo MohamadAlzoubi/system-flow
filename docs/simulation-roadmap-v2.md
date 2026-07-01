@@ -34,6 +34,11 @@ using seeded deterministic sampling.
 
 Acceptance: p95/p99 derive from modeled samples rather than fixed multipliers.
 
+Status: in progress. Worker processing time and external API latency now accept
+jitter percentages. A graph/profile-seeded normal sampler produces reproducible
+latency samples, and p95/p99 are calculated from those samples instead of fixed
+average-latency multipliers.
+
 ## 4. Broker and stream fidelity
 
 Add consumer groups, partitions, per-consumer prefetch, acknowledgement and publisher
@@ -42,6 +47,12 @@ dead-letter capacity, and message-age tracking.
 
 Acceptance: queue replay explains enqueue, delivery, acknowledgement, retry,
 expiration, and dead-letter transitions.
+
+Status: in progress. RabbitMQ queues now model partitions and consumer groups,
+publisher confirms, acknowledgements, durable persistence latency, broker throughput,
+storage/bandwidth configuration, ordering requirements, redelivery, dead-letter
+capacity, and message age. Replay frames expose acknowledged, redelivered, expired,
+overflowed, and dead-letter-overflow event counts.
 
 ## 5. Data-store fidelity
 

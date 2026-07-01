@@ -59,7 +59,7 @@ export function SystemNode({ data, selected }: NodeProps) {
           {serviceFrame
             ? `${serviceFrame.replicas}/${serviceFrame.desiredReplicas} replicas · ${serviceFrame.capacityPerSecond.toLocaleString()}/s`
             : queueFrame
-              ? `${queueFrame.depth.toLocaleString()} queued · ${queueFrame.expiredEvents.toLocaleString()} expired`
+              ? `${queueFrame.depth.toLocaleString()} queued · ${Math.round(queueFrame.averageMessageAgeMs / 1000)}s old`
               : metrics
                 ? `${metrics.incomingRatePerSecond.toLocaleString()}/s · ${metrics.capacityPerSecond ? `${Math.round(metrics.utilizationPercent ?? 0)}%` : `${metrics.latencyMs} ms`}`
                 : String(data.subtitle || definition?.category)}

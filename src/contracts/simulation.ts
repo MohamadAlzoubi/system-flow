@@ -55,6 +55,10 @@ export type QueueSimulationMetrics = {
   expiredEvents: number
   deadLetteredEvents: number
   overflowEvents: number
+  redeliveredEvents: number
+  acknowledgedEvents: number
+  deadLetterOverflowEvents: number
+  averageMessageAgeMs: number
   timeToSaturationSeconds?: number
 }
 
@@ -80,6 +84,10 @@ export type QueueFrameMetrics = {
   expiredEvents: number
   deadLetteredEvents: number
   overflowEvents: number
+  redeliveredEvents: number
+  acknowledgedEvents: number
+  deadLetterOverflowEvents: number
+  averageMessageAgeMs: number
 }
 
 export type EdgeSimulationMetrics = {
