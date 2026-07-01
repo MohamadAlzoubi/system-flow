@@ -1,0 +1,1042 @@
+Exactly. The important idea is:
+
+**Data should be the main thing, not the node.**
+
+A node is only a place where data is created, transformed, cached, queued, delayed, broadcasted, persisted, or rejected.
+
+## 1. What needs to be defined?
+
+You need these main concepts:
+
+### 1. Data Type / Event Type
+
+Example:
+
+```ts
+type ProductViewedEvent = {
+  userId: string;
+  productId: string;
+  storeId: string;
+  timestamp: string;
+};
+```
+
+This is the “thing” moving through the system.
+
+You should define:
+
+```ts
+type DataContract = {
+  name: string;
+  version: string;
+  schema: object;
+  estimatedSizeBytes: number;
+};
+```
+
+Examples:
+
+* `ProductViewedEvent`
+* `AddToCartEvent`
+* `PurchaseEvent`
+* `ChatMessageEvent`
+* `EmailSendJob`
+* `RecommendationRequest`
+* `WebSocketNotification`
+
+Without typed data, your simulator becomes just boxes and arrows.
+
+---
+
+## 2. Node Definition
+
+Every node should have:
+
+```ts
+type NodeDefinition = {
+  type: string;
+  label: string;
+  category: string;
+
+  inputTypes: string[];
+  outputTypes: string[];
+
+  configSchema: object;
+
+  simulate: Function;
+  execute?: Function;
+};
+```
+
+The important part is this:
+
+* `simulate` = fake behavior for architecture simulation
+* `execute` = optional real function used in the actual repo
+
+So later, the same business logic can be reused.
+
+Example:
+
+```ts
+const enrichProductViewNode = {
+  type: "function.enrichProductView",
+  inputTypes: ["ProductViewedEvent"],
+  outputTypes: ["EnrichedProductViewedEvent"],
+
+  simulate(input, config, context) {
+    return {
+      output: {
+        type: "EnrichedProductViewedEvent",
+        sizeBytes: input.sizeBytes + 300,
+      },
+      latencyMs: 12,
+      cpuCost: 0.2,
+      memoryCostMb: 3,
+    };
+  },
+
+  execute: async (input, context) => {
+    return enrichProductView(input);
+  },
+};
+```
+
+That is the correct direction.
+
+Not just drawing.
+Not just simulation.
+But **typed executable architecture**.
+
+---
+
+# 3. How many node types do you need?
+
+For the first version, I would not go above **12 core nodes**.
+
+These are enough to build most backend flows.
+
+| Node               | Why you need it                                    |
+| ------------------ | -------------------------------------------------- |
+| Event Source       | Starts flow: SDK event, user action, webhook, cron |
+| HTTP Endpoint      | Simulates API routes                               |
+| Function / Service | Custom code logic                                  |
+| Router / Condition | Branching logic                                    |
+| Redis Cache        | Cache read/write/TTL/memory                        |
+| RabbitMQ Queue     | Async job/message queue                            |
+| Worker             | Consumes RabbitMQ jobs                             |
+| Database           | Persistence, queries, connection pool              |
+| WebSocket Gateway  | Realtime push/broadcast                            |
+| External API       | Third-party service call                           |
+| Scheduler / Cron   | Periodic jobs                                      |
+| Logger / Metrics   | Observability and tracing                          |
+
+That is your MVP.
+
+Do **not** start with 50 nodes. You will kill the product before it breathes.
+
+Start with those 12 and make the internal system scalable.
+
+---
+
+# 4. Node configs you need
+
+## Event Source
+
+Used for things like:
+
+* product viewed
+* add to cart
+* purchase
+* chat message
+* webhook received
+
+Config:
+
+```ts
+{
+  eventType: "ProductViewedEvent",
+  ratePerSecond: 500,
+  payloadSizeBytes: 1200,
+  burstMode: false
+}
+```
+
+---
+
+## HTTP Endpoint
+
+Config:
+
+```ts
+{
+  method: "POST",
+  path: "/events/product-viewed",
+  timeoutMs: 3000,
+  authRequired: true,
+  maxRequestsPerSecond: 1000,
+  averageLatencyMs: 40
+}
+```
+
+Checks:
+
+* endpoint overloaded
+* timeout risk
+* sync dependency risk
+* too many downstream calls
+
+---
+
+## Function / Service
+
+This is your most important node.
+
+Config:
+
+```ts
+{
+  functionName: "enrichProductView",
+  averageExecutionMs: 20,
+  cpuCostPerRequest: 0.3,
+  memoryMbPerRequest: 5,
+  failureRate: 0.01
+}
+```
+
+It should support two modes:
+
+1. **Simulated function**
+2. **Real imported function from repo**
+
+That means later you can do:
+
+```ts
+execute: enrichProductView
+```
+
+and still have simulation metadata around it.
+
+---
+
+## Router / Condition
+
+Used for logic like:
+
+```ts
+if user is logged in -> continue
+if anonymous -> save anonymous event
+if country is Turkey -> send to TR campaign flow
+```
+
+Config:
+
+```ts
+{
+  rules: [
+    {
+      condition: "input.country === 'TR'",
+      target: "turkey-flow"
+    },
+    {
+      condition: "input.country !== 'TR'",
+      target: "global-flow"
+    }
+  ]
+}
+```
+
+---
+
+## Redis Cache
+
+Config:
+
+```ts
+{
+  operation: "read-write",
+  keyPattern: "product:{productId}",
+  ttlSeconds: 3600,
+  hitRate: 0.75,
+  averageReadMs: 2,
+  averageWriteMs: 4,
+  maxMemoryMb: 512,
+  evictionPolicy: "allkeys-lru",
+  itemSizeBytes: 2000
+}
+```
+
+Things simulator can detect:
+
+* memory overflow
+* bad TTL
+* low hit rate
+* too many writes
+* Redis becoming bottleneck
+* cache stampede risk
+
+---
+
+## RabbitMQ Queue
+
+Config:
+
+```ts
+{
+  exchangeType: "direct",
+  queueName: "product-viewed-events",
+  durable: true,
+  maxQueueSize: 100000,
+  messageTtlMs: 60000,
+  retryCount: 3,
+  retryDelayMs: 5000,
+  deadLetterQueue: true,
+  prefetch: 10
+}
+```
+
+Things simulator can detect:
+
+* queue growing forever
+* workers too slow
+* retry storm
+* message loss risk
+* DLQ overflow
+* bad prefetch/concurrency
+
+---
+
+## Worker
+
+Config:
+
+```ts
+{
+  workerName: "product-viewed-worker",
+  concurrency: 10,
+  averageProcessingMs: 80,
+  cpuCostPerJob: 0.5,
+  memoryMbPerJob: 20,
+  ackMode: "manual",
+  failureRate: 0.02
+}
+```
+
+Things simulator can detect:
+
+* not enough consumers
+* CPU saturation
+* memory saturation
+* jobs processed slower than produced
+* retry amplification
+
+---
+
+## Database
+
+Config:
+
+```ts
+{
+  databaseType: "mongodb",
+  operation: "insert",
+  averageQueryMs: 15,
+  connectionPoolSize: 50,
+  maxWritesPerSecond: 2000,
+  documentSizeBytes: 1500,
+  indexUsed: true
+}
+```
+
+Things simulator can detect:
+
+* connection pool saturation
+* slow queries
+* missing index warning
+* write bottleneck
+* too many sync DB calls
+
+---
+
+## WebSocket Gateway
+
+Config:
+
+```ts
+{
+  connectedClients: 50000,
+  rooms: 1000,
+  averageMessageSizeBytes: 800,
+  messagesPerSecond: 2000,
+  broadcastMode: "room",
+  memoryPerConnectionKb: 50
+}
+```
+
+Things simulator can detect:
+
+* fanout explosion
+* memory risk
+* broadcast bottleneck
+* socket server CPU saturation
+* need for Redis adapter / pub-sub
+
+---
+
+## External API
+
+Config:
+
+```ts
+{
+  providerName: "SendGrid",
+  averageLatencyMs: 300,
+  timeoutMs: 3000,
+  rateLimitPerSecond: 100,
+  failureRate: 0.03,
+  retryCount: 2
+}
+```
+
+Things simulator can detect:
+
+* external dependency bottleneck
+* timeout risk
+* retry storm
+* rate limit exceeded
+
+---
+
+## Scheduler / Cron
+
+Config:
+
+```ts
+{
+  cronExpression: "*/5 * * * *",
+  jobType: "syncRecommendations",
+  batchSize: 10000,
+  averageItemProcessingMs: 5
+}
+```
+
+Things simulator can detect:
+
+* cron jobs overlapping
+* batch too large
+* background jobs affecting live traffic
+
+---
+
+# 5. The most important design decision
+
+You need to separate every node into **four layers**:
+
+```ts
+Node Definition
+Node Instance
+Node Runtime
+Node Simulation
+```
+
+## Node Definition
+
+The reusable blueprint.
+
+Example:
+
+```ts
+RedisCacheNode
+RabbitMQQueueNode
+HttpEndpointNode
+WorkerNode
+```
+
+## Node Instance
+
+The actual node placed on canvas.
+
+Example:
+
+```ts
+{
+  id: "redis-product-cache-1",
+  type: "redis.cache",
+  config: {
+    ttlSeconds: 3600,
+    maxMemoryMb: 512
+  }
+}
+```
+
+## Node Runtime
+
+Optional real behavior.
+
+Example:
+
+```ts
+execute(input) {
+  return redis.get(...)
+}
+```
+
+## Node Simulation
+
+Fake behavior.
+
+Example:
+
+```ts
+simulate(input) {
+  return {
+    latencyMs: 2,
+    memoryUsedMb: 0.002,
+    output: input
+  }
+}
+```
+
+This design will stay scalable.
+
+---
+
+# 6. The graph structure
+
+Your flow should be stored like this:
+
+```ts
+type FlowGraph = {
+  id: string;
+  name: string;
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+  dataContracts: DataContract[];
+  simulationProfile: SimulationProfile;
+};
+```
+
+Example edge:
+
+```ts
+type FlowEdge = {
+  id: string;
+  fromNodeId: string;
+  toNodeId: string;
+  dataType: string;
+  condition?: string;
+};
+```
+
+Important: edges should also be typed.
+
+Bad:
+
+```ts
+A -> B
+```
+
+Good:
+
+```ts
+A -- ProductViewedEvent --> B
+```
+
+This allows the system to say:
+
+> “This node expects `PurchaseEvent`, but it receives `ProductViewedEvent`.”
+
+That is very useful.
+
+---
+
+# 7. Simulation profile
+
+The architect should define the environment:
+
+```ts
+{
+  durationSeconds: 300,
+  cpuCores: 8,
+  memoryMb: 16000,
+  networkLatencyMs: 5,
+  requestsPerSecond: 1000,
+  trafficPattern: "steady"
+}
+```
+
+Later:
+
+```ts
+trafficPattern: "burst"
+trafficPattern: "daily-peak"
+trafficPattern: "random"
+```
+
+Simulation outputs:
+
+```ts
+{
+  totalEventsProcessed: 100000,
+  averageLatencyMs: 80,
+  p95LatencyMs: 220,
+  p99LatencyMs: 700,
+  bottlenecks: [],
+  warnings: [],
+  deadlockRisks: [],
+  resourceUsage: {}
+}
+```
+
+---
+
+# 8. Issues the system should detect
+
+Start with simple useful checks.
+
+## Type mismatch
+
+Example:
+
+> Worker expects `EmailJob`, but RabbitMQ sends `ProductViewedEvent`.
+
+## Queue overload
+
+Example:
+
+> RabbitMQ receives 1000 messages/sec, but workers process 600 messages/sec. Queue will grow forever.
+
+## CPU saturation
+
+Example:
+
+> Worker pool requires 12 CPU cores, but environment has 8.
+
+## Memory saturation
+
+Example:
+
+> WebSocket gateway needs 3.2GB memory for 50k clients.
+
+## Timeout chain
+
+Example:
+
+> HTTP request waits for External API with p95 latency 3.5s, but endpoint timeout is 3s.
+
+## Retry storm
+
+Example:
+
+> External API failure rate + retry count creates 2.6x traffic amplification.
+
+## Circular dependency risk
+
+Example:
+
+```txt
+Service A waits for Queue B
+Worker B calls Service A
+```
+
+This is not always a real deadlock, but it is a dangerous pattern.
+
+## Cache stampede risk
+
+Example:
+
+> High traffic + low TTL + expensive DB fallback may overload DB when cache expires.
+
+---
+
+# 9. Expansion nodes later
+
+After the MVP, add:
+
+| Node                  | Use                          |
+| --------------------- | ---------------------------- |
+| Kafka / Stream        | event streaming              |
+| Load Balancer         | distribute HTTP traffic      |
+| API Gateway           | auth, throttling, routing    |
+| Rate Limiter          | request protection           |
+| Circuit Breaker       | failure isolation            |
+| Bulkhead              | isolate resource pools       |
+| Object Storage        | S3/R2 files                  |
+| CDN                   | static/media delivery        |
+| Search Engine         | Elasticsearch/OpenSearch     |
+| Lock / Semaphore      | distributed locks            |
+| Transaction           | DB transaction modeling      |
+| DLQ                   | failed message handling      |
+| Email Provider        | SendGrid/Mailgun simulation  |
+| Push Provider         | Firebase/web push            |
+| Feature Flag          | A/B testing logic            |
+| Recommendation Engine | ranking/personalization flow |
+| Analytics Sink        | event tracking pipeline      |
+
+For your case, because you work around campaigns, recommendations, pushes, and templates, later you could add marketing-specific nodes:
+
+* Segment Resolver
+* Campaign Matcher
+* Template Renderer
+* Recommendation Engine
+* Email Sender
+* WhatsApp Sender
+* Web Push Sender
+* Onsite Campaign Display
+* A/B Test Splitter
+* Attribution Tracker
+
+That could become very powerful for AlgorithmX-style systems.
+
+---
+
+# 10. Best MVP scope
+
+I would build this first:
+
+```txt
+SDK Event Source
+   ↓
+HTTP Endpoint
+   ↓
+Service Function
+   ↓
+Redis Cache
+   ↓
+RabbitMQ Queue
+   ↓
+Worker
+   ↓
+Database
+   ↓
+WebSocket Notification
+```
+
+This alone lets you simulate:
+
+* product viewed
+* add to cart
+* purchase
+* chat message
+* campaign trigger
+* notification pipeline
+* recommendation update
+
+Do not build all tools first. Build the engine first.
+
+---
+
+# 11. Recommended project structure
+
+```txt
+src/
+  app/
+  flow-builder/
+    canvas/
+    nodes/
+    edges/
+    inspector/
+  engine/
+    graph/
+    simulation/
+    validation/
+    metrics/
+  node-registry/
+    http-endpoint/
+    function-node/
+    redis-cache/
+    rabbitmq-queue/
+    worker/
+    database/
+    websocket/
+    external-api/
+    scheduler/
+  contracts/
+    data-contract.ts
+    node-definition.ts
+    flow-graph.ts
+  examples/
+    product-viewed-flow.ts
+    purchase-flow.ts
+```
+
+This keeps things clean.
+
+---
+
+# 12. Prompt to generate the starting point
+
+Use this as the starting prompt for an AI coding agent.
+
+Build the starting point for a TypeScript-based visual backend system-flow simulator.
+
+The product is not a normal diagramming tool. It should let users visually build backend/data-flow architectures using typed nodes and typed edges, then simulate how data moves through the system.
+
+Core goal:
+Create an MVP where users can drag and drop backend nodes such as HTTP Endpoint, Function/Service, Redis Cache, RabbitMQ Queue, Worker, Database, WebSocket Gateway, External API, Scheduler/Cron, Router/Condition, Event Source, and Logger/Metrics.
+
+Important concepts:
+
+1. Data contracts are first-class.
+2. Every edge should represent a typed data flow.
+3. Every node should define accepted input types and produced output types.
+4. The system should validate type mismatches before simulation.
+5. The simulation should not connect to real Redis, RabbitMQ, sockets, databases, or external APIs. It should only simulate behavior based on configuration.
+6. The design must be scalable so future nodes can be added as plugins.
+
+Use React, TypeScript, React Flow, and Zod.
+
+Create these core types:
+
+* DataContract
+* FlowGraph
+* FlowNode
+* FlowEdge
+* NodeDefinition
+* NodeInstance
+* SimulationProfile
+* SimulationResult
+* NodeSimulationResult
+* ValidationIssue
+
+Each NodeDefinition should include:
+
+* type
+* label
+* category
+* inputTypes
+* outputTypes
+* defaultConfig
+* configSchema using Zod
+* simulate(input, config, context)
+* optional execute(input, context) for future real runtime integration
+
+The execute function is not required in the MVP, but the design should allow the same business function from a real codebase to be attached later.
+
+Create a plugin-style node registry where each node type lives in its own folder and exports its definition.
+
+Implement the first 12 node types:
+
+1. Event Source
+2. HTTP Endpoint
+3. Function / Service
+4. Router / Condition
+5. Redis Cache
+6. RabbitMQ Queue
+7. Worker
+8. Database
+9. WebSocket Gateway
+10. External API
+11. Scheduler / Cron
+12. Logger / Metrics
+
+Each node should have realistic configuration fields.
+
+Redis Cache config should include:
+
+* operation
+* keyPattern
+* ttlSeconds
+* hitRate
+* averageReadMs
+* averageWriteMs
+* maxMemoryMb
+* itemSizeBytes
+* evictionPolicy
+
+RabbitMQ Queue config should include:
+
+* exchangeType
+* queueName
+* durable
+* maxQueueSize
+* messageTtlMs
+* retryCount
+* retryDelayMs
+* deadLetterQueue
+* prefetch
+
+Worker config should include:
+
+* concurrency
+* averageProcessingMs
+* cpuCostPerJob
+* memoryMbPerJob
+* ackMode
+* failureRate
+
+HTTP Endpoint config should include:
+
+* method
+* path
+* timeoutMs
+* authRequired
+* maxRequestsPerSecond
+* averageLatencyMs
+
+Database config should include:
+
+* databaseType
+* operation
+* averageQueryMs
+* connectionPoolSize
+* maxWritesPerSecond
+* documentSizeBytes
+* indexUsed
+
+WebSocket Gateway config should include:
+
+* connectedClients
+* rooms
+* averageMessageSizeBytes
+* messagesPerSecond
+* broadcastMode
+* memoryPerConnectionKb
+
+External API config should include:
+
+* providerName
+* averageLatencyMs
+* timeoutMs
+* rateLimitPerSecond
+* failureRate
+* retryCount
+
+SimulationProfile should include:
+
+* durationSeconds
+* cpuCores
+* memoryMb
+* networkLatencyMs
+* requestsPerSecond
+* trafficPattern
+
+Build a simple simulation engine that walks through the graph from Event Source nodes and calculates:
+
+* total events processed
+* estimated average latency
+* estimated p95 latency
+* estimated p99 latency
+* queue growth risk
+* CPU saturation risk
+* memory saturation risk
+* timeout risk
+* retry storm risk
+* type mismatch warnings
+* circular dependency risk
+
+Do not try to make the simulation mathematically perfect in the first version. Make it deterministic, understandable, and easy to extend.
+
+UI requirements:
+
+* Use React Flow for the canvas.
+* Left sidebar contains draggable node types.
+* Center area is the graph canvas.
+* Right inspector panel edits selected node config.
+* Bottom or side panel shows validation issues and simulation results.
+* Add a “Validate Flow” button.
+* Add a “Run Simulation” button.
+* Add a few example flows:
+
+  1. Product Viewed Event Pipeline
+  2. Purchase Event Pipeline
+  3. Chat Message to WebSocket Notification
+  4. RabbitMQ Worker Bottleneck Example
+
+Architecture requirements:
+
+* Keep the simulation engine independent from the UI.
+* Keep node definitions independent from React components.
+* Use Zod for config validation.
+* Use TypeScript generics where useful.
+* Avoid hardcoded logic inside UI components.
+* Make adding a new node possible by creating one new folder and registering it in the node registry.
+
+Folder structure suggestion:
+
+src/
+app/
+flow-builder/
+canvas/
+sidebar/
+inspector/
+results/
+engine/
+graph/
+simulation/
+validation/
+metrics/
+node-registry/
+event-source/
+http-endpoint/
+function-node/
+router-condition/
+redis-cache/
+rabbitmq-queue/
+worker/
+database/
+websocket-gateway/
+external-api/
+scheduler/
+logger-metrics/
+contracts/
+data-contract.ts
+flow-graph.ts
+node-definition.ts
+simulation.ts
+examples/
+product-viewed-flow.ts
+purchase-flow.ts
+chat-message-flow.ts
+bottleneck-flow.ts
+
+The final result should be a clean MVP foundation, not a finished product. Prioritize scalable architecture, typed contracts, readable code, and easy future expansion.
+
+---
+
+# 13. The real future version
+
+The future advanced version should have three modes:
+
+## Mode 1: Design mode
+
+User draws architecture.
+
+## Mode 2: Simulation mode
+
+System simulates traffic, latency, memory, queues, bottlenecks.
+
+## Mode 3: Runtime mapping mode
+
+User connects actual repo functions to nodes.
+
+Example:
+
+```ts
+node.execute = import("@/services/events/handleProductViewed");
+```
+
+Then your system knows:
+
+```txt
+This visual node represents this real function in the codebase.
+```
+
+That becomes very valuable.
+
+Later, you can generate:
+
+* architecture documentation
+* flow diagrams
+* backend skeleton code
+* queue contracts
+* TypeScript types
+* OpenAPI endpoints
+* worker boilerplate
+* Mermaid diagrams
+* risk reports
+
+The strongest direction is:
+
+> **A typed backend-flow simulator that can gradually become connected to real code.**
+
+That is much better than only drag-and-drop simulation.

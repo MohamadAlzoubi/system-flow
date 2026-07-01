@@ -1,0 +1,5 @@
+export { compareSimulations } from "./simulation/compare-simulations"
+export { runSimulation } from "./simulation/run-simulation"
+export { hasCycle } from "./validation/detect-cycles"
+export { validateFlow } from "./validation/validate-flow"
+export { validateEdgeTypes } from "./validation/validate-types"
