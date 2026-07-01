@@ -49,6 +49,13 @@ export function FlowCanvas() {
     () => new Map(frame?.resilience.map((resilience) => [resilience.nodeId, resilience])),
     [frame],
   )
+  const availabilityFrames = useMemo(
+    () =>
+      new Map(
+        frame?.availability.map((availability) => [availability.nodeId, availability]),
+      ),
+    [frame],
+  )
   const nodeMetrics = useMemo(
     () => new Map(result?.nodeMetrics.map((metric) => [metric.nodeId, metric])),
     [result],
@@ -73,9 +80,11 @@ export function FlowCanvas() {
           serviceFrame: serviceFrames.get(node.id),
           datastoreFrame: datastoreFrames.get(node.id),
           resilienceFrame: resilienceFrames.get(node.id),
+          availabilityFrame: availabilityFrames.get(node.id),
         },
       })),
     [
+      availabilityFrames,
       datastoreFrames,
       graph.nodes,
       nodeMetrics,

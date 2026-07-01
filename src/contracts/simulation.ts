@@ -75,6 +75,7 @@ export type NodeSimulationMetrics = {
   scaleReadySeconds?: number
   datastore?: import("./node-definition").NodeSimulationResult["datastore"]
   resilience?: import("./node-definition").NodeSimulationResult["resilience"]
+  availabilityPercent: number
 }
 
 export type QueueSimulationMetrics = {
@@ -101,6 +102,13 @@ export type SimulationFrame = {
   services: ServiceFrameMetrics[]
   datastores: DataStoreFrameMetrics[]
   resilience: ResilienceFrameMetrics[]
+  availability: AvailabilityFrameMetrics[]
+}
+
+export type AvailabilityFrameMetrics = {
+  nodeId: string
+  state: "online" | "offline" | "degraded" | "recovering"
+  capacityPercent: number
 }
 
 export type ResilienceFrameMetrics = {

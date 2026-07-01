@@ -8,6 +8,17 @@ export type NodeInstance = {
   config: Record<string, unknown>
   routingPolicy?: RoutingPolicy
   mergePolicy?: MergePolicy
+  availabilityPolicy?: AvailabilityPolicy
+}
+
+export type AvailabilityMode = "online" | "offline" | "scheduled" | "degraded"
+
+export type AvailabilityPolicy = {
+  mode: AvailabilityMode
+  offlineFromSeconds: number
+  offlineDurationSeconds: number
+  recoverySeconds: number
+  degradedCapacityPercent: number
 }
 
 export type RoutingMode =

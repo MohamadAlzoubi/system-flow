@@ -57,6 +57,9 @@ The UI discovers registered nodes automatically.
 See [simulation-roadmap.md](simulation-roadmap.md) for result semantics, UX goals, and
 the staged implementation plan.
 
+See [outage-simulation.md](outage-simulation.md) for shared online, offline, degraded,
+and scheduled availability semantics.
+
 ## UI Rules
 
 - Keep workflow components focused on one area.

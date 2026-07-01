@@ -27,6 +27,7 @@ import {
   Waves,
 } from "lucide-react"
 import type {
+  AvailabilityFrameMetrics,
   DataStoreFrameMetrics,
   NodeSimulationMetrics,
   QueueFrameMetrics,
@@ -73,6 +74,7 @@ export function SystemNode({ data, selected }: NodeProps) {
   const serviceFrame = data.serviceFrame as ServiceFrameMetrics | undefined
   const datastoreFrame = data.datastoreFrame as DataStoreFrameMetrics | undefined
   const resilienceFrame = data.resilienceFrame as ResilienceFrameMetrics | undefined
+  const availabilityFrame = data.availabilityFrame as AvailabilityFrameMetrics | undefined
 
   return (
     <div
@@ -85,21 +87,23 @@ export function SystemNode({ data, selected }: NodeProps) {
       <div>
         <strong>{definition?.label}</strong>
         <small>
-          {serviceFrame
-            ? `${serviceFrame.replicas}/${serviceFrame.desiredReplicas} replicas · ${serviceFrame.limitingResource}`
-            : resilienceFrame
-              ? `${resilienceFrame.circuitState} · ${resilienceFrame.downstreamRatePerSecond.toLocaleString()}/s downstream`
-              : datastoreFrame
-                ? `${datastoreFrame.primaryState} · ${Math.round(datastoreFrame.connectionUtilizationPercent)}% connections`
-                : queueFrame
-                  ? `${queueFrame.depth.toLocaleString()} queued · ${queueFrame.activePartitions} partitions · ${Math.round(queueFrame.averageMessageAgeMs / 1000)}s old`
-                  : metrics?.resilience
-                    ? `${Math.round(metrics.resilience.availabilityPercent)}% available · ${Math.round(metrics.resilience.rejectedPerSecond)}/s rejected`
-                    : metrics?.datastore
-                      ? `${metrics.datastore.limitingResource} · ${Math.round(metrics.capacityPerSecond ?? 0).toLocaleString()}/s`
-                      : metrics
-                        ? `${metrics.incomingRatePerSecond.toLocaleString()}/s · ${metrics.capacityPerSecond ? `${Math.round(metrics.utilizationPercent ?? 0)}%` : `${metrics.latencyMs} ms`}`
-                        : String(data.subtitle || definition?.category)}
+          {availabilityFrame && availabilityFrame.state !== "online"
+            ? `${availabilityFrame.state} · ${availabilityFrame.capacityPercent}% capacity`
+            : serviceFrame
+              ? `${serviceFrame.replicas}/${serviceFrame.desiredReplicas} replicas · ${serviceFrame.limitingResource}`
+              : resilienceFrame
+                ? `${resilienceFrame.circuitState} · ${resilienceFrame.downstreamRatePerSecond.toLocaleString()}/s downstream`
+                : datastoreFrame
+                  ? `${datastoreFrame.primaryState} · ${Math.round(datastoreFrame.connectionUtilizationPercent)}% connections`
+                  : queueFrame
+                    ? `${queueFrame.depth.toLocaleString()} queued · ${queueFrame.activePartitions} partitions · ${Math.round(queueFrame.averageMessageAgeMs / 1000)}s old`
+                    : metrics?.resilience
+                      ? `${Math.round(metrics.resilience.availabilityPercent)}% available · ${Math.round(metrics.resilience.rejectedPerSecond)}/s rejected`
+                      : metrics?.datastore
+                        ? `${metrics.datastore.limitingResource} · ${Math.round(metrics.capacityPerSecond ?? 0).toLocaleString()}/s`
+                        : metrics
+                          ? `${metrics.incomingRatePerSecond.toLocaleString()}/s · ${metrics.capacityPerSecond ? `${Math.round(metrics.utilizationPercent ?? 0)}%` : `${metrics.latencyMs} ms`}`
+                          : String(data.subtitle || definition?.category)}
         </small>
       </div>
       <Handle type="source" position={Position.Right} />

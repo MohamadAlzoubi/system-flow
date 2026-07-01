@@ -1,6 +1,8 @@
 export type { DataContract } from "./data-contract"
 export type { EdgeNetworkPolicy, FlowEdge, FlowGraph } from "./flow-graph"
 export type {
+  AvailabilityMode,
+  AvailabilityPolicy,
   MergeMode,
   MergePolicy,
   NodeDefinition,
@@ -11,6 +13,7 @@ export type {
   SimulationContext,
 } from "./node-definition"
 export type {
+  AvailabilityFrameMetrics,
   DataStoreFrameMetrics,
   EdgeSimulationMetrics,
   MetricDelta,

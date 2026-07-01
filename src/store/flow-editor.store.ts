@@ -37,6 +37,10 @@ type FlowEditorState = {
     routingMode: NodeInstance["routingPolicy"],
     mergeMode: NodeInstance["mergePolicy"],
   ) => void
+  updateNodeAvailability: (
+    id: string,
+    availabilityPolicy: NodeInstance["availabilityPolicy"],
+  ) => void
   updateSimulationProfile: (profile: SimulationProfile) => void
   updateEdgeNetwork: (id: string, network: FlowEdge["network"]) => void
   addNode: (type: string, position?: NodeInstance["position"]) => void
@@ -158,6 +162,19 @@ export const useFlowEditorStore = create<FlowEditorState>((set) => ({
           node.id === id ? { ...node, routingPolicy, mergePolicy } : node,
         ),
       },
+      isDirty: true,
+    })),
+  updateNodeAvailability: (id, availabilityPolicy) =>
+    set((state) => ({
+      graph: {
+        ...state.graph,
+        nodes: state.graph.nodes.map((node) =>
+          node.id === id ? { ...node, availabilityPolicy } : node,
+        ),
+      },
+      simulationResult: null,
+      simulationComparison: null,
+      validationIssues: [],
       isDirty: true,
     })),
   updateSimulationProfile: (simulationProfile) =>

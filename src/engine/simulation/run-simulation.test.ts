@@ -584,4 +584,72 @@ describe("runSimulation", () => {
     })
     expect(result?.throughputPerSecond).toBe(6000)
   })
+
+  it("takes Redis and Worker fully offline", () => {
+    const redisGraph = structuredClone(productViewedFlow)
+    const redis = redisGraph.nodes.find((node) => node.type === "redis.cache")
+    if (!redis) throw new Error("Fixture requires Redis")
+    redis.availabilityPolicy = {
+      mode: "offline",
+      offlineFromSeconds: 0,
+      offlineDurationSeconds: 0,
+      recoverySeconds: 0,
+      degradedCapacityPercent: 0,
+    }
+    const redisResult = runSimulation(redisGraph, nodeRegistry)
+    expect(redisResult.nodeMetrics.find((metric) => metric.nodeId === redis.id)).toEqual(
+      expect.objectContaining({
+        acceptedRatePerSecond: 0,
+        availabilityPercent: 0,
+      }),
+    )
+    expect(redisResult.totalEventsProcessed).toBe(0)
+
+    const workerGraph = structuredClone(bottleneckFlow)
+    const worker = workerGraph.nodes.find((node) => node.type === "worker")
+    const queue = workerGraph.nodes.find((node) => node.type === "rabbitmq.queue")
+    if (!worker || !queue) throw new Error("Fixture requires queue and worker")
+    worker.availabilityPolicy = {
+      mode: "offline",
+      offlineFromSeconds: 0,
+      offlineDurationSeconds: 0,
+      recoverySeconds: 0,
+      degradedCapacityPercent: 0,
+    }
+    const workerResult = runSimulation(workerGraph, nodeRegistry)
+    expect(
+      workerResult.nodeMetrics.find((metric) => metric.nodeId === queue.id)?.queue
+        ?.dequeuedEvents,
+    ).toBe(0)
+  })
+
+  it("replays a scheduled outage and recovery", () => {
+    const graph = structuredClone(productViewedFlow)
+    const worker = graph.nodes.find((node) => node.type === "worker")
+    if (!worker) throw new Error("Fixture requires worker")
+    worker.availabilityPolicy = {
+      mode: "scheduled",
+      offlineFromSeconds: 60,
+      offlineDurationSeconds: 60,
+      recoverySeconds: 20,
+      degradedCapacityPercent: 50,
+    }
+
+    const result = runSimulation(graph, nodeRegistry)
+    const atOutage = result.timeline
+      .find((frame) => frame.timeSeconds === 60)
+      ?.availability.find((item) => item.nodeId === worker.id)
+    const recovering = result.timeline
+      .find((frame) => frame.timeSeconds === 125)
+      ?.availability.find((item) => item.nodeId === worker.id)
+    const recovered = result.timeline
+      .find((frame) => frame.timeSeconds === 140)
+      ?.availability.find((item) => item.nodeId === worker.id)
+
+    expect(atOutage?.state).toBe("offline")
+    expect(recovering).toEqual(
+      expect.objectContaining({ state: "recovering", capacityPercent: 25 }),
+    )
+    expect(recovered?.state).toBe("online")
+  })
 })

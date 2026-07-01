@@ -2,6 +2,7 @@ import type {
   EdgeSimulationMetrics,
   FlowGraph,
   NodeDefinition,
+  NodeInstance,
   NodeSimulationMetrics,
   NodeSimulationResult,
   QueueFrameMetrics,
@@ -106,6 +107,37 @@ function retryOpportunities(
     opportunities += 1
   }
   return opportunities
+}
+
+function availabilityAt(
+  node: NodeInstance,
+  timeSeconds: number,
+): { state: "online" | "offline" | "degraded" | "recovering"; factor: number } {
+  const policy = node.availabilityPolicy
+  if (!policy || policy.mode === "online") return { state: "online", factor: 1 }
+  if (policy.mode === "offline") return { state: "offline", factor: 0 }
+  if (policy.mode === "degraded") {
+    return { state: "degraded", factor: policy.degradedCapacityPercent / 100 }
+  }
+  const outageEnd = policy.offlineFromSeconds + policy.offlineDurationSeconds
+  if (timeSeconds < policy.offlineFromSeconds) return { state: "online", factor: 1 }
+  if (timeSeconds < outageEnd) return { state: "offline", factor: 0 }
+  if (policy.recoverySeconds > 0 && timeSeconds < outageEnd + policy.recoverySeconds) {
+    return {
+      state: "recovering",
+      factor: (timeSeconds - outageEnd) / policy.recoverySeconds,
+    }
+  }
+  return { state: "online", factor: 1 }
+}
+
+function averageAvailability(node: NodeInstance, durationSeconds: number): number {
+  const samples = Math.max(1, Math.min(300, durationSeconds))
+  let total = 0
+  for (let index = 0; index < samples; index += 1) {
+    total += availabilityAt(node, (index / samples) * durationSeconds).factor
+  }
+  return total / samples
 }
 
 function mergeContributions(
@@ -260,6 +292,7 @@ export function runSimulation(
         )
     const inputRate = merged.rate
     const result = definition.simulate(node.config, { profile, ratePerSecond: inputRate })
+    const availabilityFactor = averageAvailability(node, profile.durationSeconds)
     latencyVariance += (result.latencyStdDevMs ?? 0) ** 2
     if (result.scaling) scalingServices.set(nodeId, result.scaling)
     if (result.datastore) datastoreStates.set(nodeId, result.datastore)
@@ -267,7 +300,8 @@ export function runSimulation(
       resilienceStates.set(nodeId, { metrics: result.resilience, inputRate })
     }
     const capacity = result.throughputPerSecond
-    let acceptedRate = capacity === undefined ? inputRate : Math.min(inputRate, capacity)
+    const effectiveCapacity = (capacity ?? inputRate) * availabilityFactor
+    let acceptedRate = Math.min(inputRate, effectiveCapacity)
     if (node.type === "rabbitmq.queue") {
       const consumerCapacities = (outgoing.get(nodeId) ?? [])
         .map((edge) => {
@@ -286,7 +320,10 @@ export function runSimulation(
                   1000) /
                 processingMs
               : Number.POSITIVE_INFINITY
-          return Math.min(targetResult.throughputPerSecond ?? inputRate, prefetchCapacity)
+          return (
+            Math.min(targetResult.throughputPerSecond ?? inputRate, prefetchCapacity) *
+            averageAvailability(target, profile.durationSeconds)
+          )
         })
         .sort((left, right) => right - left)
       const activePartitions = Math.min(
@@ -308,7 +345,12 @@ export function runSimulation(
       )
       const storageCapacityEvents =
         (number(node.config.brokerStorageMb) * 1024 * 1024) / payloadSizeBytes
-      acceptedRate = Math.min(inputRate, consumerCapacity || inputRate, brokerCapacity)
+      acceptedRate =
+        Math.min(
+          inputRate,
+          consumerCapacities.length > 0 ? consumerCapacity : inputRate,
+          brokerCapacity,
+        ) * availabilityFactor
       const consumers = (outgoing.get(nodeId) ?? [])
         .map((edge) => nodes.get(edge.toNodeId))
         .filter((target) => target !== undefined)
@@ -358,7 +400,7 @@ export function runSimulation(
       })
     }
     const utilization =
-      capacity && capacity > 0 ? (inputRate / capacity) * 100 : undefined
+      effectiveCapacity > 0 ? (inputRate / effectiveCapacity) * 100 : undefined
     const droppedRate = Math.max(0, inputRate - acceptedRate)
     const status =
       inputRate === 0
@@ -395,6 +437,7 @@ export function runSimulation(
       scaleReadySeconds: result.scaling?.readyAfterSeconds,
       datastore: result.datastore,
       resilience: result.resilience,
+      availabilityPercent: round(availabilityFactor * 100),
     }
     nodeMetrics.push(nodeMetric)
 
@@ -510,11 +553,15 @@ export function runSimulation(
         const timeoutFailure =
           target?.type === "external.api" &&
           number(target.config.averageLatencyMs) > number(target.config.timeoutMs)
-        const healthy = configuredFailureRate < 1 && !timeoutFailure
+        const healthy =
+          configuredFailureRate < 1 &&
+          !timeoutFailure &&
+          target?.availabilityPolicy?.mode !== "offline"
         const firstHealthyIndex = sortedEdges.findIndex((candidate) => {
           const candidateTarget = nodes.get(candidate.toNodeId)
           return (
             (number(candidateTarget?.config.failureRate) || 0) < 1 &&
+            candidateTarget?.availabilityPolicy?.mode !== "offline" &&
             !(
               candidateTarget?.type === "external.api" &&
               number(candidateTarget.config.averageLatencyMs) >
@@ -725,12 +772,23 @@ export function runSimulation(
         }
       },
     )
+    const availability = graph.nodes
+      .filter((node) => node.availabilityPolicy !== undefined)
+      .map((node) => {
+        const current = availabilityAt(node, frameTime)
+        return {
+          nodeId: node.id,
+          state: current.state,
+          capacityPercent: round(current.factor * 100),
+        }
+      })
     timeline.push({
       timeSeconds: frameTime,
       queues,
       services,
       datastores,
       resilience,
+      availability,
     })
   }
   if (timeline.at(-1)?.timeSeconds !== profile.durationSeconds) {
@@ -768,6 +826,16 @@ export function runSimulation(
           ),
         }),
       ),
+      availability: graph.nodes
+        .filter((node) => node.availabilityPolicy !== undefined)
+        .map((node) => {
+          const current = availabilityAt(node, profile.durationSeconds)
+          return {
+            nodeId: node.id,
+            state: current.state,
+            capacityPercent: round(current.factor * 100),
+          }
+        }),
     })
   }
   for (const metric of nodeMetrics) {

@@ -1,6 +1,7 @@
 import { Box, Cable, X } from "lucide-react"
 import { nodeRegistry } from "../../node-registry"
 import { useFlowEditorStore } from "../../store/flow-editor.store"
+import { AvailabilityForm } from "./AvailabilityForm"
 import { ConfigForm } from "./ConfigForm"
 import { EdgeNetworkForm } from "./EdgeNetworkForm"
 import { SimulationProfileForm } from "./SimulationProfileForm"
@@ -16,6 +17,9 @@ export function NodeInspector() {
   )
   const updateEdgeNetwork = useFlowEditorStore((state) => state.updateEdgeNetwork)
   const setInspectorOpen = useFlowEditorStore((state) => state.setInspectorOpen)
+  const updateNodeAvailability = useFlowEditorStore(
+    (state) => state.updateNodeAvailability,
+  )
   const node = graph.nodes.find((item) => item.id === selectedNodeId)
   const edge = graph.edges.find((item) => item.id === selectedEdgeId)
   const definition = node ? nodeRegistry.get(node.type) : undefined
@@ -46,6 +50,11 @@ export function NodeInspector() {
             node={node}
             definition={definition}
             onSave={(config) => updateNodeConfig(node.id, config)}
+          />
+          <h3>Availability & outage</h3>
+          <AvailabilityForm
+            policy={node.availabilityPolicy}
+            onSave={(policy) => updateNodeAvailability(node.id, policy)}
           />
           <h3>Flow policies</h3>
           <label>

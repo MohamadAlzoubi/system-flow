@@ -20,6 +20,22 @@ export function validateFlow(
       })
     }
     nodeIds.add(node.id)
+    const availability = node.availabilityPolicy
+    if (
+      availability &&
+      (availability.offlineFromSeconds < 0 ||
+        availability.offlineDurationSeconds < 0 ||
+        availability.recoverySeconds < 0 ||
+        availability.degradedCapacityPercent < 0 ||
+        availability.degradedCapacityPercent > 100)
+    ) {
+      issues.push({
+        severity: "error",
+        code: "INVALID_AVAILABILITY",
+        message: "Node availability values are outside their valid ranges",
+        nodeId: node.id,
+      })
+    }
     const definition = registry.get(node.type)
     if (!definition) {
       issues.push({
