@@ -37,6 +37,10 @@ export function FlowCanvas() {
     () => new Map(frame?.queues.map((queue) => [queue.nodeId, queue])),
     [frame],
   )
+  const serviceFrames = useMemo(
+    () => new Map(frame?.services.map((service) => [service.nodeId, service])),
+    [frame],
+  )
   const nodeMetrics = useMemo(
     () => new Map(result?.nodeMetrics.map((metric) => [metric.nodeId, metric])),
     [result],
@@ -58,9 +62,10 @@ export function FlowCanvas() {
           subtitle: String(node.config.eventType ?? node.config.queueName ?? ""),
           metrics: nodeMetrics.get(node.id),
           queueFrame: queueFrames.get(node.id),
+          serviceFrame: serviceFrames.get(node.id),
         },
       })),
-    [graph.nodes, nodeMetrics, queueFrames, selectedNodeId],
+    [graph.nodes, nodeMetrics, queueFrames, selectedNodeId, serviceFrames],
   )
   const edges = useMemo<Edge[]>(
     () =>

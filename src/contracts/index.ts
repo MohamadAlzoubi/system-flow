@@ -16,6 +16,7 @@ export type {
   NodeSimulationMetrics,
   QueueFrameMetrics,
   QueueSimulationMetrics,
+  ServiceFrameMetrics,
   SimulationBaseline,
   SimulationComparison,
   SimulationFrame,

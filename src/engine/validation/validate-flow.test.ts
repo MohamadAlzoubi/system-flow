@@ -91,4 +91,17 @@ describe("validateFlow", () => {
       expect.objectContaining({ code: "INVALID_COMPETING_CONSUMERS" }),
     )
   })
+
+  it("rejects disconnected nodes", () => {
+    const graph = structuredClone(productViewedFlow)
+    graph.nodes.push({
+      id: "orphan",
+      type: "worker",
+      position: { x: 0, y: 0 },
+      config: { ...nodeRegistry.get("worker")?.defaultConfig },
+    })
+    expect(validateFlow(graph, nodeRegistry)).toContainEqual(
+      expect.objectContaining({ code: "DISCONNECTED_NODE", severity: "error" }),
+    )
+  })
 })

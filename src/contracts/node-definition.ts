@@ -40,6 +40,12 @@ export type NodeSimulationResult = {
   throughputPerSecond?: number
   outputType?: string
   retryAmplification?: number
+  scaling?: {
+    initialReplicas: number
+    desiredReplicas: number
+    readyAfterSeconds: number
+    capacityPerReplica: number
+  }
 }
 
 export type NodeDefinition = {

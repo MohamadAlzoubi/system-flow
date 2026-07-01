@@ -42,6 +42,9 @@ export type NodeSimulationMetrics = {
   queue?: QueueSimulationMetrics
   routingMode?: import("./node-definition").RoutingMode
   mergeMode?: import("./node-definition").MergeMode
+  replicas?: number
+  desiredReplicas?: number
+  scaleReadySeconds?: number
 }
 
 export type QueueSimulationMetrics = {
@@ -58,6 +61,15 @@ export type QueueSimulationMetrics = {
 export type SimulationFrame = {
   timeSeconds: number
   queues: QueueFrameMetrics[]
+  services: ServiceFrameMetrics[]
+}
+
+export type ServiceFrameMetrics = {
+  nodeId: string
+  replicas: number
+  desiredReplicas: number
+  capacityPerSecond: number
+  scaling: boolean
 }
 
 export type QueueFrameMetrics = {

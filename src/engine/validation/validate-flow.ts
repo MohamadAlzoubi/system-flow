@@ -139,10 +139,24 @@ export function validateFlow(
   issues.push(...validateEdgeTypes(graph, registry))
   if (hasCycle(graph)) {
     issues.push({
-      severity: "warning",
+      severity: "error",
       code: "CIRCULAR_DEPENDENCY",
-      message: "The graph contains a circular dependency",
+      message: "Cycles are not supported by deterministic simulation",
     })
+  }
+
+  const connected = new Set(
+    graph.edges.flatMap((edge) => [edge.fromNodeId, edge.toNodeId]),
+  )
+  for (const node of graph.nodes) {
+    if (graph.nodes.length > 1 && !connected.has(node.id)) {
+      issues.push({
+        severity: "error",
+        code: "DISCONNECTED_NODE",
+        message: "Node is disconnected from the flow",
+        nodeId: node.id,
+      })
+    }
   }
 
   return issues

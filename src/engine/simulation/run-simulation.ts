@@ -3,6 +3,7 @@ import type {
   FlowGraph,
   NodeDefinition,
   NodeSimulationMetrics,
+  NodeSimulationResult,
   QueueFrameMetrics,
   SimulationFrame,
   SimulationResult,
@@ -46,6 +47,20 @@ export function runSimulation(
 ): SimulationResult {
   const warnings: ValidationIssue[] = validateFlow(graph, registry)
   const profile = graph.simulationProfile
+  if (warnings.some((issue) => issue.severity === "error")) {
+    return {
+      totalEventsProcessed: 0,
+      averageLatencyMs: 0,
+      p95LatencyMs: 0,
+      p99LatencyMs: 0,
+      bottlenecks: [],
+      warnings,
+      resourceUsage: { cpuCores: 0, memoryMb: 0 },
+      nodeMetrics: [],
+      edgeMetrics: [],
+      timeline: [],
+    }
+  }
   const nodes = new Map(graph.nodes.map((node) => [node.id, node]))
   const outgoing = new Map<string, typeof graph.edges>()
   const incomingCount = new Map(graph.nodes.map((node) => [node.id, 0]))
@@ -78,6 +93,7 @@ export function runSimulation(
   let memory = 0
   let endToEndLatency = 0
   const timeline: SimulationFrame[] = []
+  const scalingServices = new Map<string, NonNullable<NodeSimulationResult["scaling"]>>()
   const queueRates = new Map<
     string,
     {
@@ -106,6 +122,7 @@ export function runSimulation(
         )
     const inputRate = merged.rate
     const result = definition.simulate(node.config, { profile, ratePerSecond: inputRate })
+    if (result.scaling) scalingServices.set(nodeId, result.scaling)
     const capacity = result.throughputPerSecond
     let acceptedRate = capacity === undefined ? inputRate : Math.min(inputRate, capacity)
     if (node.type === "rabbitmq.queue") {
@@ -117,7 +134,17 @@ export function runSimulation(
           profile,
           ratePerSecond: inputRate,
         })
-        return sum + (targetResult.throughputPerSecond ?? inputRate)
+        const processingMs = number(target.config.averageProcessingMs)
+        const prefetchCapacity =
+          processingMs > 0
+            ? (number(node.config.prefetch) *
+                Math.max(1, number(target.config.concurrency)) *
+                1000) /
+              processingMs
+            : Number.POSITIVE_INFINITY
+        return (
+          sum + Math.min(targetResult.throughputPerSecond ?? inputRate, prefetchCapacity)
+        )
       }, 0)
       acceptedRate = Math.min(inputRate, consumerCapacity || inputRate)
       queueRates.set(nodeId, {
@@ -161,6 +188,9 @@ export function runSimulation(
       status,
       routingMode: node.routingPolicy?.mode,
       mergeMode: node.mergePolicy?.mode,
+      replicas: result.scaling?.initialReplicas,
+      desiredReplicas: result.scaling?.desiredReplicas,
+      scaleReadySeconds: result.scaling?.readyAfterSeconds,
     }
     nodeMetrics.push(nodeMetric)
 
@@ -235,7 +265,26 @@ export function runSimulation(
             ? ((targetCapacities.get(edge.id) ?? 0) / capacityTotal) * 100
             : 100 / edges.length
       }
-      if (routingMode === "failover") percentage = index === 0 ? 100 : 0
+      if (routingMode === "failover") {
+        const target = nodes.get(edge.toNodeId)
+        const configuredFailureRate = number(target?.config.failureRate) || 0
+        const timeoutFailure =
+          target?.type === "external.api" &&
+          number(target.config.averageLatencyMs) > number(target.config.timeoutMs)
+        const healthy = configuredFailureRate < 1 && !timeoutFailure
+        const firstHealthyIndex = sortedEdges.findIndex((candidate) => {
+          const candidateTarget = nodes.get(candidate.toNodeId)
+          return (
+            (number(candidateTarget?.config.failureRate) || 0) < 1 &&
+            !(
+              candidateTarget?.type === "external.api" &&
+              number(candidateTarget.config.averageLatencyMs) >
+                number(candidateTarget.config.timeoutMs)
+            )
+          )
+        })
+        percentage = healthy && index === firstHealthyIndex ? 100 : 0
+      }
       const edgeRate = acceptedRate * (percentage / 100)
       incomingContributions.set(edge.toNodeId, [
         ...(incomingContributions.get(edge.toNodeId) ?? []),
@@ -294,12 +343,31 @@ export function runSimulation(
       queueState.set(nodeId, next)
       queues.push(next)
     }
-    timeline.push({ timeSeconds: Math.min(time, profile.durationSeconds), queues })
+    const frameTime = Math.min(time, profile.durationSeconds)
+    const services = [...scalingServices].map(([nodeId, scaling]) => {
+      const ready = frameTime >= scaling.readyAfterSeconds
+      const replicas = ready ? scaling.desiredReplicas : scaling.initialReplicas
+      return {
+        nodeId,
+        replicas,
+        desiredReplicas: scaling.desiredReplicas,
+        capacityPerSecond: round(replicas * scaling.capacityPerReplica),
+        scaling: !ready && scaling.desiredReplicas !== scaling.initialReplicas,
+      }
+    })
+    timeline.push({ timeSeconds: frameTime, queues, services })
   }
   if (timeline.at(-1)?.timeSeconds !== profile.durationSeconds) {
     timeline.push({
       timeSeconds: profile.durationSeconds,
       queues: [...queueState.values()],
+      services: [...scalingServices].map(([nodeId, scaling]) => ({
+        nodeId,
+        replicas: scaling.desiredReplicas,
+        desiredReplicas: scaling.desiredReplicas,
+        capacityPerSecond: round(scaling.desiredReplicas * scaling.capacityPerReplica),
+        scaling: false,
+      })),
     })
   }
   for (const metric of nodeMetrics) {

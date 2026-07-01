@@ -14,7 +14,11 @@ import {
   Radio,
   RadioTower,
 } from "lucide-react"
-import type { NodeSimulationMetrics, QueueFrameMetrics } from "../../contracts"
+import type {
+  NodeSimulationMetrics,
+  QueueFrameMetrics,
+  ServiceFrameMetrics,
+} from "../../contracts"
 import { nodeRegistry } from "../../node-registry"
 
 const icons: Record<string, LucideIcon> = {
@@ -39,6 +43,7 @@ export function SystemNode({ data, selected }: NodeProps) {
   const colorClass = `node-${nodeType.replaceAll(".", "-")}`
   const metrics = data.metrics as NodeSimulationMetrics | undefined
   const queueFrame = data.queueFrame as QueueFrameMetrics | undefined
+  const serviceFrame = data.serviceFrame as ServiceFrameMetrics | undefined
 
   return (
     <div
@@ -51,11 +56,13 @@ export function SystemNode({ data, selected }: NodeProps) {
       <div>
         <strong>{definition?.label}</strong>
         <small>
-          {queueFrame
-            ? `${queueFrame.depth.toLocaleString()} queued · ${queueFrame.expiredEvents.toLocaleString()} expired`
-            : metrics
-              ? `${metrics.incomingRatePerSecond.toLocaleString()}/s · ${metrics.capacityPerSecond ? `${Math.round(metrics.utilizationPercent ?? 0)}%` : `${metrics.latencyMs} ms`}`
-              : String(data.subtitle || definition?.category)}
+          {serviceFrame
+            ? `${serviceFrame.replicas}/${serviceFrame.desiredReplicas} replicas · ${serviceFrame.capacityPerSecond.toLocaleString()}/s`
+            : queueFrame
+              ? `${queueFrame.depth.toLocaleString()} queued · ${queueFrame.expiredEvents.toLocaleString()} expired`
+              : metrics
+                ? `${metrics.incomingRatePerSecond.toLocaleString()}/s · ${metrics.capacityPerSecond ? `${Math.round(metrics.utilizationPercent ?? 0)}%` : `${metrics.latencyMs} ms`}`
+                : String(data.subtitle || definition?.category)}
         </small>
       </div>
       <Handle type="source" position={Position.Right} />

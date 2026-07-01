@@ -97,3 +97,14 @@ The rate model is an architecture estimator, not an event-level load test. Perce
 latencies remain deterministic estimates, resource totals are node-definition
 heuristics, cycles are unsupported, and queues currently use immediate downstream
 capacity rather than a full broker scheduling model.
+
+## Completion notes
+
+- Disconnected nodes and cycles are fatal simulation errors.
+- Queue consumer capacity is constrained by prefetch and processing time; retry
+  amplification and delay remain deterministic time-slice estimates.
+- Failover selects the first priority-ordered healthy target using configured failure
+  and timeout health.
+- Routing and merge policies are editable in the node inspector.
+- Replay uses deterministic broker time slices rather than nondeterministic wall-clock
+  infrastructure, preserving reproducible event scheduling.

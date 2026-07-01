@@ -5,6 +5,7 @@ import type {
   NodeInstance,
   SimulationBaseline,
   SimulationComparison,
+  SimulationProfile,
   SimulationResult,
   ValidationIssue,
 } from "../contracts"
@@ -28,6 +29,12 @@ type FlowEditorState = {
   setSelectedEdge: (id: string | null) => void
   setNodePosition: (id: string, position: NodeInstance["position"]) => void
   updateNodeConfig: (id: string, config: Record<string, unknown>) => void
+  updateNodePolicies: (
+    id: string,
+    routingMode: NodeInstance["routingPolicy"],
+    mergeMode: NodeInstance["mergePolicy"],
+  ) => void
+  updateSimulationProfile: (profile: SimulationProfile) => void
   addNode: (type: string, position?: NodeInstance["position"]) => void
   addEdge: (edge: FlowEdge) => void
   removeNodes: (ids: string[]) => void
@@ -82,6 +89,24 @@ export const useFlowEditorStore = create<FlowEditorState>((set) => ({
           node.id === id ? { ...node, config } : node,
         ),
       },
+      isDirty: true,
+    })),
+  updateNodePolicies: (id, routingPolicy, mergePolicy) =>
+    set((state) => ({
+      graph: {
+        ...state.graph,
+        nodes: state.graph.nodes.map((node) =>
+          node.id === id ? { ...node, routingPolicy, mergePolicy } : node,
+        ),
+      },
+      isDirty: true,
+    })),
+  updateSimulationProfile: (simulationProfile) =>
+    set((state) => ({
+      graph: { ...state.graph, simulationProfile },
+      simulationResult: null,
+      simulationComparison: null,
+      validationIssues: [],
       isDirty: true,
     })),
   addNode: (type, position) =>

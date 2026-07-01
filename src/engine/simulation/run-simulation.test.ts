@@ -153,4 +153,47 @@ describe("runSimulation", () => {
       expect.objectContaining({ incomingRatePerSecond: 100, mergeMode: "wait-all" }),
     )
   })
+
+  it("does not simulate invalid cyclic graphs", () => {
+    const graph = structuredClone(productViewedFlow)
+    graph.edges.push({
+      id: "cycle",
+      fromNodeId: graph.nodes.at(-1)?.id ?? "",
+      toNodeId: graph.nodes[0].id,
+      dataType: "ProductViewedEvent",
+    })
+    const result = runSimulation(graph, nodeRegistry)
+    expect(result.totalEventsProcessed).toBe(0)
+    expect(result.nodeMetrics).toEqual([])
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({ code: "CIRCULAR_DEPENDENCY", severity: "error" }),
+    )
+  })
+
+  it("models worker scale-up delay and replay capacity", () => {
+    const graph = structuredClone(productViewedFlow)
+    const worker = graph.nodes.find((node) => node.type === "worker")
+    if (!worker) throw new Error("Fixture requires a worker")
+    worker.config.autoscalingEnabled = true
+    worker.config.maxReplicas = 10
+
+    const result = runSimulation(graph, nodeRegistry)
+    const metric = result.nodeMetrics.find((item) => item.nodeId === worker.id)
+    const beforeReady = result.timeline
+      .find((frame) => frame.timeSeconds === 30)
+      ?.services.find((service) => service.nodeId === worker.id)
+    const afterReady = result.timeline
+      .find((frame) => frame.timeSeconds === 40)
+      ?.services.find((service) => service.nodeId === worker.id)
+
+    expect(metric).toEqual(
+      expect.objectContaining({
+        replicas: 1,
+        desiredReplicas: 6,
+        scaleReadySeconds: 40,
+      }),
+    )
+    expect(beforeReady?.scaling).toBe(true)
+    expect(afterReady).toEqual(expect.objectContaining({ replicas: 6, scaling: false }))
+  })
 })
