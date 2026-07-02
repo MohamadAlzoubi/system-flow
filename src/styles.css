@@ -573,6 +573,173 @@ h3 {
   margin-top: 2px;
 }
 
+.goal-report {
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--surface-muted));
+}
+
+.goal-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.goal-summary span {
+  color: hsl(var(--muted));
+  font-size: 10px;
+}
+
+.goal-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 11px;
+  border-top: 1px solid hsl(var(--border));
+}
+
+.goal-row b {
+  flex-shrink: 0;
+  width: 88px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.goal-passed b {
+  color: hsl(var(--success));
+  background: hsl(var(--primary-soft));
+}
+
+.goal-failed b {
+  color: hsl(var(--danger));
+  background: hsl(var(--danger-soft));
+}
+
+.goal-not-evaluated b {
+  color: hsl(var(--muted));
+  background: hsl(var(--surface));
+}
+
+.goal-row small {
+  color: hsl(var(--muted));
+  font-size: 10px;
+}
+
+.goal-row .improved {
+  color: hsl(var(--success));
+}
+
+.goal-row .regressed {
+  color: hsl(var(--danger));
+}
+
+.goal-open-questions {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid hsl(var(--border));
+  font-size: 10px;
+  color: hsl(var(--warning));
+}
+
+.goal-open-questions strong {
+  color: hsl(var(--foreground));
+  font-size: 11px;
+}
+
+.goal-assumptions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+  color: hsl(var(--muted));
+  font-size: 10px;
+}
+
+.goal-hint {
+  margin: 8px 0;
+  color: hsl(var(--muted));
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.new-flow-modal {
+  width: min(480px, 94vw);
+  max-height: min(640px, 88vh);
+  overflow: auto;
+  padding: 18px;
+  background: hsl(var(--surface));
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 55%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.new-flow-modal .results-head {
+  padding: 0 0 6px;
+}
+
+.goal-preset-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+}
+
+.goal-preset-options legend {
+  padding: 0 4px;
+  font-size: 11px;
+  color: hsl(var(--muted));
+}
+
+.goal-preset-options label {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.goal-preset-options label:has(input:checked) {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary-soft));
+}
+
+.goal-preset-options input {
+  accent-color: hsl(var(--primary));
+}
+
+.goal-preset-options span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.goal-preset-options small {
+  color: hsl(var(--muted));
+  font-size: 10px;
+}
+
 .timeline-controls {
   display: flex;
   align-items: center;

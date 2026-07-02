@@ -1,9 +1,11 @@
 import { Box, Cable, X } from "lucide-react"
 import { nodeRegistry } from "../../node-registry"
 import { useFlowEditorStore } from "../../store/flow-editor.store"
+import { ArchitectureGoalsForm } from "./ArchitectureGoalsForm"
 import { AvailabilityForm } from "./AvailabilityForm"
 import { ConfigForm } from "./ConfigForm"
 import { EdgeNetworkForm } from "./EdgeNetworkForm"
+import { InteractionForm } from "./InteractionForm"
 import { SimulationProfileForm } from "./SimulationProfileForm"
 
 export function NodeInspector() {
@@ -15,7 +17,11 @@ export function NodeInspector() {
   const updateSimulationProfile = useFlowEditorStore(
     (state) => state.updateSimulationProfile,
   )
+  const updateArchitectureGoals = useFlowEditorStore(
+    (state) => state.updateArchitectureGoals,
+  )
   const updateEdgeNetwork = useFlowEditorStore((state) => state.updateEdgeNetwork)
+  const updateEdgeInteraction = useFlowEditorStore((state) => state.updateEdgeInteraction)
   const setInspectorOpen = useFlowEditorStore((state) => state.setInspectorOpen)
   const updateNodeAvailability = useFlowEditorStore(
     (state) => state.updateNodeAvailability,
@@ -112,8 +118,15 @@ export function NodeInspector() {
               <small>
                 {edge.fromNodeId} → {edge.toNodeId}
               </small>
+              {edge.responseDataType && <small>returns {edge.responseDataType}</small>}
             </div>
           </div>
+          <h3>Interaction</h3>
+          <InteractionForm
+            key={edge.id}
+            edge={edge}
+            onSave={(interaction) => updateEdgeInteraction(edge.id, interaction)}
+          />
           <h3>Network topology</h3>
           <EdgeNetworkForm
             key={edge.id}
@@ -124,8 +137,15 @@ export function NodeInspector() {
       ) : (
         <>
           <div className="empty">
-            Configure the simulation scenario or select a node to edit it.
+            Define what this design must achieve, configure the simulation scenario, or
+            select a node to edit it.
           </div>
+          <h3>Design goals</h3>
+          <ArchitectureGoalsForm
+            key={graph.id}
+            goals={graph.architectureGoals}
+            onSave={updateArchitectureGoals}
+          />
           <h3>Simulation scenario</h3>
           <SimulationProfileForm
             profile={graph.simulationProfile}

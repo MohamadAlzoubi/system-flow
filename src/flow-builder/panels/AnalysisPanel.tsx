@@ -1,7 +1,70 @@
 import { Activity, BookmarkPlus, Pause, Play, X } from "lucide-react"
 import { useEffect, useState } from "react"
-import type { MetricDelta } from "../../contracts"
+import type { GoalReport, MetricDelta } from "../../contracts"
 import { useFlowEditorStore } from "../../store/flow-editor.store"
+
+const goalStatusLabels = {
+  passed: "Passed",
+  failed: "Failed",
+  "not-evaluated": "Not evaluated",
+} as const
+
+function GoalReportSection({ report }: { report: GoalReport }) {
+  return (
+    <div className="goal-report">
+      <div className="goal-summary">
+        <strong>Architecture goals</strong>
+        <span>
+          {report.passed} passed · {report.failed} failed · {report.notEvaluated} not
+          evaluated
+        </span>
+      </div>
+      {report.evaluations.map((evaluation) => (
+        <div
+          className={`goal-row goal-${evaluation.status}`}
+          key={evaluation.goal}
+          title={evaluation.reason}
+        >
+          <b>{goalStatusLabels[evaluation.status]}</b>
+          <span>{evaluation.label}</span>
+          {evaluation.target !== undefined && (
+            <small>
+              target {evaluation.target.toLocaleString()}
+              {evaluation.unit ? ` ${evaluation.unit}` : ""}
+              {evaluation.actual !== undefined &&
+                ` · actual ${evaluation.actual.toLocaleString()}${
+                  evaluation.unit ? ` ${evaluation.unit}` : ""
+                }`}
+            </small>
+          )}
+          {evaluation.safetyMarginPercent !== undefined && (
+            <small
+              className={evaluation.safetyMarginPercent >= 0 ? "improved" : "regressed"}
+            >
+              {evaluation.safetyMarginPercent > 0 ? "+" : ""}
+              {evaluation.safetyMarginPercent.toLocaleString()}% margin
+            </small>
+          )}
+        </div>
+      ))}
+      {report.openQuestions.length > 0 && (
+        <div className="goal-open-questions">
+          <strong>Open questions</strong>
+          {report.openQuestions.map((question) => (
+            <span key={question}>{question}</span>
+          ))}
+        </div>
+      )}
+      {report.assumptions.length > 0 && (
+        <div className="goal-assumptions">
+          {report.assumptions.map((assumption) => (
+            <small key={assumption}>{assumption}</small>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function Delta({
   label,
@@ -133,6 +196,7 @@ export function AnalysisPanel() {
                 {result.resourceUsage.memoryMb} MB<small>memory</small>
               </b>
             </div>
+            {result.goalReport && <GoalReportSection report={result.goalReport} />}
             {result.timeline.some((frame) => frame.queues.length > 0) && (
               <div className="timeline-controls">
                 <button type="button" onClick={() => setPlaying((value) => !value)}>

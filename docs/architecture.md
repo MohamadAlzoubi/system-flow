@@ -53,6 +53,10 @@ The UI discovers registered nodes automatically.
 - Multiple outgoing edges broadcast by default. Percentage-based routing must be
   explicit and total 100 percent.
 - Arbitrary edge conditions are never evaluated as JavaScript.
+- Every edge declares an explicit interaction type. Synchronous interactions
+  (request-response, database-operation) propagate latency to the caller;
+  asynchronous interactions (async-command, published-event, stream,
+  batch-transfer, realtime-push) end caller latency at the boundary.
 
 See [simulation-roadmap.md](simulation-roadmap.md) for result semantics, UX goals, and
 the staged implementation plan.

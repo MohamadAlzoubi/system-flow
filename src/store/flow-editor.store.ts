@@ -10,7 +10,7 @@ import type {
   SimulationResult,
   ValidationIssue,
 } from "../contracts"
-import { compareSimulations } from "../engine"
+import { compareSimulations, inferInteractionDefaults } from "../engine"
 import { productViewedFlow } from "../examples"
 import { nodeRegistry } from "../node-registry"
 
@@ -42,7 +42,15 @@ type FlowEditorState = {
     availabilityPolicy: NodeInstance["availabilityPolicy"],
   ) => void
   updateSimulationProfile: (profile: SimulationProfile) => void
+  updateArchitectureGoals: (goals: FlowGraph["architectureGoals"]) => void
   updateEdgeNetwork: (id: string, network: FlowEdge["network"]) => void
+  updateEdgeInteraction: (
+    id: string,
+    interaction: Pick<
+      FlowEdge,
+      "interactionType" | "timeoutMs" | "responseDataType" | "deliveryPolicy"
+    >,
+  ) => void
   addNode: (type: string, position?: NodeInstance["position"]) => void
   addEdge: (edge: FlowEdge) => void
   removeNodes: (ids: string[]) => void
@@ -100,7 +108,18 @@ function loadSavedGraph(): FlowGraph {
   try {
     const value: unknown = JSON.parse(window.localStorage.getItem(storageKey) ?? "null")
     const parsed = savedGraphSchema.safeParse(value)
-    if (parsed.success) return parsed.data as FlowGraph
+    if (parsed.success) {
+      const graph = parsed.data as FlowGraph
+      return {
+        ...graph,
+        // Graphs saved before interaction types migrate with inferred defaults.
+        edges: graph.edges.map((edge) =>
+          edge.interactionType
+            ? edge
+            : { ...edge, ...inferInteractionDefaults(edge, graph.nodes, nodeRegistry) },
+        ),
+      }
+    }
   } catch {
     // Ignore invalid or outdated local data and use the bundled example.
   }
@@ -185,12 +204,41 @@ export const useFlowEditorStore = create<FlowEditorState>((set) => ({
       validationIssues: [],
       isDirty: true,
     })),
+  updateArchitectureGoals: (architectureGoals) =>
+    set((state) => ({
+      graph: { ...state.graph, architectureGoals },
+      simulationResult: null,
+      simulationComparison: null,
+      validationIssues: [],
+      isDirty: true,
+    })),
   updateEdgeNetwork: (id, network) =>
     set((state) => ({
       graph: {
         ...state.graph,
         edges: state.graph.edges.map((edge) =>
           edge.id === id ? { ...edge, network } : edge,
+        ),
+      },
+      simulationResult: null,
+      simulationComparison: null,
+      validationIssues: [],
+      isDirty: true,
+    })),
+  updateEdgeInteraction: (id, interaction) =>
+    set((state) => ({
+      graph: {
+        ...state.graph,
+        edges: state.graph.edges.map((edge) =>
+          edge.id === id
+            ? {
+                ...edge,
+                interactionType: interaction.interactionType,
+                timeoutMs: interaction.timeoutMs,
+                responseDataType: interaction.responseDataType,
+                deliveryPolicy: interaction.deliveryPolicy,
+              }
+            : edge,
         ),
       },
       simulationResult: null,

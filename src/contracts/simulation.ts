@@ -1,3 +1,4 @@
+import type { GoalReport } from "./architecture-goals"
 import type { ValidationIssue } from "./validation"
 
 export type TrafficPattern = "steady" | "burst" | "daily-peak" | "random"
@@ -31,6 +32,7 @@ export type SimulationResult = {
   edgeMetrics: EdgeSimulationMetrics[]
   timeline: SimulationFrame[]
   explanation: SimulationExplanation
+  goalReport?: GoalReport
 }
 
 export type SimulationExplanation = {

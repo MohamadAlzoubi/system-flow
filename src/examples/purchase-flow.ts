@@ -13,4 +13,14 @@ export const purchaseFlow = createExampleFlow(
     "external.api",
   ],
   "PurchaseEvent",
+  {
+    averageTrafficPerSecond: 500,
+    peakTrafficPerSecond: 1500,
+    maximumAverageLatencyMs: 800,
+    maximumP95LatencyMs: 1200,
+    minimumAvailabilityPercent: 99.9,
+    maximumDataLossEvents: 0,
+    maximumRecoveryTimeSeconds: 300,
+    orderingRequirement: "none",
+  },
 )

@@ -2,12 +2,14 @@ import {
   BarChart3,
   CheckCircle2,
   Download,
+  FilePlus2,
   GraduationCap,
   PanelRight,
   Play,
   Trash2,
   Workflow,
 } from "lucide-react"
+import { useState } from "react"
 import { Button } from "../../components/ui/button"
 import { runSimulation, validateFlow } from "../../engine"
 import {
@@ -18,6 +20,7 @@ import {
 } from "../../examples"
 import { nodeRegistry } from "../../node-registry"
 import { useFlowEditorStore } from "../../store/flow-editor.store"
+import { NewFlowDialog } from "./NewFlowDialog"
 
 const examples = [productViewedFlow, purchaseFlow, chatMessageFlow, bottleneckFlow]
 
@@ -34,6 +37,7 @@ export function FlowToolbar() {
   const isInspectorOpen = useFlowEditorStore((state) => state.isInspectorOpen)
   const setInspectorOpen = useFlowEditorStore((state) => state.setInspectorOpen)
   const setAnalysisOpen = useFlowEditorStore((state) => state.setAnalysisOpen)
+  const [isNewFlowOpen, setNewFlowOpen] = useState(false)
 
   const exportFlow = () => {
     const blob = new Blob([JSON.stringify(graph, null, 2)], {
@@ -69,6 +73,14 @@ export function FlowToolbar() {
         {isDirty && <span className="dirty">Saved locally</span>}
       </div>
       <div className="actions">
+        <Button
+          variant="outline"
+          onClick={() => setNewFlowOpen(true)}
+          title="Create a new flow from design goals"
+        >
+          <FilePlus2 size={16} />
+          New flow
+        </Button>
         <Button
           variant="outline"
           onClick={() => {
@@ -134,6 +146,7 @@ export function FlowToolbar() {
           Run simulation
         </Button>
       </div>
+      {isNewFlowOpen && <NewFlowDialog onClose={() => setNewFlowOpen(false)} />}
     </header>
   )
 }

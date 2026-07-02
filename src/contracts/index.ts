@@ -1,5 +1,18 @@
+export type {
+  ArchitectureGoals,
+  GoalEvaluation,
+  GoalReport,
+  GoalStatus,
+  OrderingRequirement,
+} from "./architecture-goals"
 export type { DataContract } from "./data-contract"
-export type { EdgeNetworkPolicy, FlowEdge, FlowGraph } from "./flow-graph"
+export type {
+  DeliveryPolicy,
+  EdgeNetworkPolicy,
+  FlowEdge,
+  FlowGraph,
+  InteractionType,
+} from "./flow-graph"
 export type {
   AvailabilityMode,
   AvailabilityPolicy,

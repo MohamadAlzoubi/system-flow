@@ -37,6 +37,7 @@ describe("validateFlow", () => {
       fromNodeId: lastNode.id,
       toNodeId: firstNode.id,
       dataType: "ProductViewedEvent",
+      interactionType: "request-response",
     })
 
     expect(validateFlow(graph, nodeRegistry)).toContainEqual(
@@ -53,6 +54,7 @@ describe("validateFlow", () => {
         fromNodeId: source.id,
         toNodeId: graph.nodes[1].id,
         dataType: "ProductViewedEvent",
+        interactionType: "request-response",
         trafficPercentage: 70,
       },
       {
@@ -60,6 +62,7 @@ describe("validateFlow", () => {
         fromNodeId: source.id,
         toNodeId: graph.nodes[2].id,
         dataType: "ProductViewedEvent",
+        interactionType: "request-response",
         trafficPercentage: 20,
       },
     ]
@@ -78,6 +81,7 @@ describe("validateFlow", () => {
         fromNodeId: graph.nodes[0].id,
         toNodeId: graph.nodes[1].id,
         dataType: "ProductViewedEvent",
+        interactionType: "request-response",
         trafficPercentage: 100,
       },
     ]

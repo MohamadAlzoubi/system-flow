@@ -11,10 +11,24 @@ import {
 } from "@xyflow/react"
 import { useCallback, useEffect, useMemo } from "react"
 import "@xyflow/react/dist/style.css"
+import type { InteractionType } from "../../contracts"
+import { inferInteractionDefaults } from "../../engine"
+import { nodeRegistry } from "../../node-registry"
 import { useFlowEditorStore } from "../../store/flow-editor.store"
 import { SystemNode } from "./SystemNode"
 
 const nodeTypes = { systemNode: SystemNode }
+
+// Solid edges are synchronous; dashes mark asynchronous boundaries.
+const interactionDashes: Record<InteractionType, string | undefined> = {
+  "request-response": undefined,
+  "database-operation": undefined,
+  "async-command": "7 5",
+  "published-event": "7 5",
+  stream: "2 4",
+  "realtime-push": "2 4",
+  "batch-transfer": "14 6",
+}
 
 export function FlowCanvas() {
   const graph = useFlowEditorStore((state) => state.graph)
@@ -118,6 +132,7 @@ export function FlowCanvas() {
             strokeWidth: metrics
               ? Math.min(5, 1.5 + Math.log10(metrics.ratePerSecond + 1))
               : 1,
+            strokeDasharray: interactionDashes[edge.interactionType],
           },
         }
       }),
@@ -168,21 +183,19 @@ export function FlowCanvas() {
     (connection: Connection) => {
       if (!connection.source || !connection.target) return
       const dataType = graph.dataContracts[0]?.name ?? "Event"
-      const edge: Edge = {
+      const base = {
         id: `edge-${crypto.randomUUID()}`,
-        source: connection.source,
-        target: connection.target,
-        label: dataType,
-        animated: true,
-      }
-      addEdge({
-        id: edge.id,
         fromNodeId: connection.source,
         toNodeId: connection.target,
         dataType,
+      }
+      addEdge({
+        ...base,
+        ...inferInteractionDefaults(base, graph.nodes, nodeRegistry),
       })
+      setSelectedEdge(base.id)
     },
-    [addEdge, graph.dataContracts],
+    [addEdge, graph.dataContracts, graph.nodes, setSelectedEdge],
   )
 
   return (

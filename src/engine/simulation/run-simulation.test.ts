@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { bottleneckFlow, productViewedFlow } from "../../examples"
+import { bottleneckFlow, chatMessageFlow, productViewedFlow } from "../../examples"
 import { nodeRegistry } from "../../node-registry"
 import { runSimulation } from "./run-simulation"
 
@@ -48,6 +48,7 @@ describe("runSimulation", () => {
         fromNodeId: graph.nodes[0].id,
         toNodeId: graph.nodes[1].id,
         dataType: "ProductViewedEvent",
+        interactionType: "request-response",
         trafficPercentage: 70,
       },
       {
@@ -55,6 +56,7 @@ describe("runSimulation", () => {
         fromNodeId: graph.nodes[0].id,
         toNodeId: graph.nodes[2].id,
         dataType: "ProductViewedEvent",
+        interactionType: "database-operation",
         trafficPercentage: 30,
       },
     ]
@@ -97,12 +99,14 @@ describe("runSimulation", () => {
         fromNodeId: queue.id,
         toNodeId: firstWorker.id,
         dataType: "QueueJob",
+        interactionType: "async-command",
       },
       {
         id: "consumer-b",
         fromNodeId: queue.id,
         toNodeId: secondWorker.id,
         dataType: "QueueJob",
+        interactionType: "async-command",
       },
     ]
 
@@ -132,24 +136,28 @@ describe("runSimulation", () => {
         fromNodeId: source.id,
         toNodeId: slow.id,
         dataType: "ProductViewedEvent",
+        interactionType: "request-response",
       },
       {
         id: "fast",
         fromNodeId: source.id,
         toNodeId: fast.id,
         dataType: "ProductViewedEvent",
+        interactionType: "request-response",
       },
       {
         id: "slow-merge",
         fromNodeId: slow.id,
         toNodeId: sink.id,
         dataType: "ProductViewedEvent",
+        interactionType: "database-operation",
       },
       {
         id: "fast-merge",
         fromNodeId: fast.id,
         toNodeId: sink.id,
         dataType: "ProductViewedEvent",
+        interactionType: "database-operation",
       },
     ]
 
@@ -168,6 +176,7 @@ describe("runSimulation", () => {
       fromNodeId: graph.nodes.at(-1)?.id ?? "",
       toNodeId: graph.nodes[0].id,
       dataType: "ProductViewedEvent",
+      interactionType: "request-response",
     })
     const result = runSimulation(graph, nodeRegistry)
     expect(result.totalEventsProcessed).toBe(0)
@@ -223,6 +232,7 @@ describe("runSimulation", () => {
         fromNodeId: source.id,
         toNodeId: database.id,
         dataType: "ProductViewedEvent",
+        interactionType: "database-operation",
       },
     ]
 
@@ -281,6 +291,7 @@ describe("runSimulation", () => {
         fromNodeId: source.id,
         toNodeId: dependency.id,
         dataType: "ProductViewedEvent",
+        interactionType: "request-response",
       },
     ]
 
@@ -327,6 +338,7 @@ describe("runSimulation", () => {
         fromNodeId: graph.nodes[0].id,
         toNodeId: graph.nodes[1].id,
         dataType: "ProductViewedEvent",
+        interactionType: "request-response",
         network: {
           sourceRegion: "eu-west",
           targetRegion: "us-east",
@@ -388,12 +400,14 @@ describe("runSimulation", () => {
         fromNodeId: source.id,
         toNodeId: limiter.id,
         dataType: "ProductViewedEvent",
+        interactionType: "request-response",
       },
       {
         id: "protected",
         fromNodeId: limiter.id,
         toNodeId: breaker.id,
         dataType: "ProductViewedEvent",
+        interactionType: "request-response",
       },
     ]
 
@@ -452,6 +466,7 @@ describe("runSimulation", () => {
         fromNodeId: graph.nodes[0].id,
         toNodeId: graph.nodes[1].id,
         dataType: "ProductViewedEvent",
+        interactionType: "request-response",
         network: {
           sourceRegion: "eu",
           targetRegion: "us",
@@ -488,6 +503,7 @@ describe("runSimulation", () => {
         fromNodeId: source.id,
         toNodeId: worker.id,
         dataType: "ProductViewedEvent",
+        interactionType: "request-response",
       },
     ]
 
@@ -651,6 +667,80 @@ describe("runSimulation", () => {
       expect.objectContaining({ state: "recovering", capacityPercent: 25 }),
     )
     expect(recovered?.state).toBe("online")
+  })
+
+  it("stops caller latency at asynchronous boundaries", () => {
+    // Async pipeline: a slower consumer changes throughput, not response time.
+    const fastConsumer = structuredClone(bottleneckFlow)
+    const slowConsumer = structuredClone(bottleneckFlow)
+    slowConsumer.nodes[2].config.averageProcessingMs = 800
+
+    expect(runSimulation(slowConsumer, nodeRegistry).averageLatencyMs).toBe(
+      runSimulation(fastConsumer, nodeRegistry).averageLatencyMs,
+    )
+
+    // The same worker called synchronously adds its time to the caller.
+    const syncGraph = structuredClone(bottleneckFlow)
+    syncGraph.nodes = [syncGraph.nodes[0], syncGraph.nodes[2], syncGraph.nodes[3]]
+    syncGraph.edges = [
+      {
+        id: "sync-call",
+        fromNodeId: syncGraph.nodes[0].id,
+        toNodeId: syncGraph.nodes[1].id,
+        dataType: "QueueJob",
+        interactionType: "request-response",
+        timeoutMs: 30000,
+        responseDataType: "QueueJobAck",
+      },
+      {
+        id: "sync-write",
+        fromNodeId: syncGraph.nodes[1].id,
+        toNodeId: syncGraph.nodes[2].id,
+        dataType: "QueueJob",
+        interactionType: "database-operation",
+      },
+    ]
+    const slowSyncGraph = structuredClone(syncGraph)
+    slowSyncGraph.nodes[1].config.averageProcessingMs = 800
+
+    expect(runSimulation(slowSyncGraph, nodeRegistry).averageLatencyMs).toBeGreaterThan(
+      runSimulation(syncGraph, nodeRegistry).averageLatencyMs,
+    )
+  })
+
+  it("compares results against declared architecture goals", () => {
+    const result = runSimulation(productViewedFlow, nodeRegistry)
+
+    expect(result.goalReport).toBeDefined()
+    expect(result.goalReport?.evaluations).toContainEqual(
+      expect.objectContaining({ goal: "maximumP95LatencyMs", status: "passed" }),
+    )
+    expect(result.goalReport?.evaluations).toContainEqual(
+      expect.objectContaining({ goal: "maximumDataLossEvents", status: "failed" }),
+    )
+    expect(result.goalReport?.evaluations).toContainEqual(
+      expect.objectContaining({
+        goal: "averageTrafficPerSecond",
+        status: "failed",
+        actual: 125,
+      }),
+    )
+    expect(result.goalReport?.openQuestions).toContain(
+      "Availability has not been decided.",
+    )
+    expect(result.goalReport?.assumptions.length).toBeGreaterThan(0)
+  })
+
+  it("evaluates the chat example goals against a valid graph", () => {
+    const result = runSimulation(chatMessageFlow, nodeRegistry)
+
+    expect(result.warnings.filter((issue) => issue.severity === "error")).toEqual([])
+    expect(result.goalReport).toEqual(
+      expect.objectContaining({ passed: 4, failed: 1, notEvaluated: 2 }),
+    )
+    expect(result.goalReport?.evaluations).toContainEqual(
+      expect.objectContaining({ goal: "peakTrafficPerSecond", status: "failed" }),
+    )
   })
 
   it("uses the selected Redis operation", () => {

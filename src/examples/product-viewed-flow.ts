@@ -14,4 +14,12 @@ export const productViewedFlow = createExampleFlow(
     "websocket.gateway",
   ],
   "ProductViewedEvent",
+  {
+    averageTrafficPerSecond: 500,
+    peakTrafficPerSecond: 1500,
+    maximumP95LatencyMs: 800,
+    maximumDataLossEvents: 0,
+    maximumDataStalenessMs: 5000,
+    orderingRequirement: "per-key",
+  },
 )

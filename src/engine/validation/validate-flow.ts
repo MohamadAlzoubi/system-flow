@@ -1,5 +1,7 @@
 import type { FlowGraph, NodeDefinition, ValidationIssue } from "../../contracts"
 import { hasCycle } from "./detect-cycles"
+import { validateGoals } from "./validate-goals"
+import { validateInteractions } from "./validate-interactions"
 import { validateEdgeTypes } from "./validate-types"
 
 export function validateFlow(
@@ -170,6 +172,8 @@ export function validateFlow(
   }
 
   issues.push(...validateEdgeTypes(graph, registry))
+  issues.push(...validateInteractions(graph, registry))
+  issues.push(...validateGoals(graph, registry))
   if (hasCycle(graph)) {
     issues.push({
       severity: "error",

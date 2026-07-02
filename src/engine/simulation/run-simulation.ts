@@ -12,10 +12,23 @@ import type {
   ValidationIssue,
 } from "../../contracts"
 import { validateFlow } from "../validation/validate-flow"
+import { evaluateGoals } from "./evaluate-goals"
 
 const number = (value: unknown) => Number(value)
 const round = (value: number) => Number(value.toFixed(2))
-type Contribution = { rate: number; latencyMs: number }
+// callerFacing marks paths still connected to the original caller; crossing an
+// asynchronous edge ends the caller's wait, so downstream latency is
+// processing lag rather than response time.
+type Contribution = { rate: number; latencyMs: number; callerFacing: boolean }
+
+// Caller latency ends where work is accepted for later processing.
+const asynchronousInteractions = new Set<FlowGraph["edges"][number]["interactionType"]>([
+  "async-command",
+  "published-event",
+  "stream",
+  "batch-transfer",
+  "realtime-push",
+])
 
 function seedFrom(value: string): number {
   let seed = 2166136261
@@ -144,17 +157,20 @@ function mergeContributions(
   contributions: Contribution[],
   mode: "sum" | "wait-all" | "first-response" | "asynchronous",
 ): Contribution {
-  if (contributions.length === 0) return { rate: 0, latencyMs: 0 }
+  if (contributions.length === 0) return { rate: 0, latencyMs: 0, callerFacing: false }
+  const callerFacing = contributions.some((item) => item.callerFacing)
   if (mode === "wait-all") {
     return {
       rate: Math.min(...contributions.map(({ rate }) => rate)),
       latencyMs: Math.max(...contributions.map(({ latencyMs }) => latencyMs)),
+      callerFacing,
     }
   }
   if (mode === "first-response") {
     return {
       rate: Math.max(...contributions.map(({ rate }) => rate)),
       latencyMs: Math.min(...contributions.map(({ latencyMs }) => latencyMs)),
+      callerFacing,
     }
   }
   return {
@@ -163,6 +179,7 @@ function mergeContributions(
       mode === "asynchronous"
         ? 0
         : Math.max(...contributions.map(({ latencyMs }) => latencyMs)),
+    callerFacing,
   }
 }
 
@@ -285,7 +302,7 @@ export function runSimulation(
       (1 + (profile.duplicateEventPercent ?? 0) / 100) *
       (1 - (profile.malformedEventPercent ?? 0) / 100)
     const merged = isSource
-      ? { rate: qualityAdjustedSourceRate, latencyMs: 0 }
+      ? { rate: qualityAdjustedSourceRate, latencyMs: 0, callerFacing: true }
       : mergeContributions(
           incomingContributions.get(nodeId) ?? [],
           node.mergePolicy?.mode ?? "sum",
@@ -414,7 +431,7 @@ export function runSimulation(
     cpu += result.cpuCores
     memory += result.memoryMb
     const pathLatency = merged.latencyMs + result.latencyMs + profile.networkLatencyMs
-    if ((outgoing.get(nodeId) ?? []).length === 0) {
+    if ((outgoing.get(nodeId) ?? []).length === 0 && merged.callerFacing) {
       endToEndLatency = Math.max(endToEndLatency, pathLatency)
     }
     const nodeMetric: NodeSimulationMetrics = {
@@ -594,9 +611,17 @@ export function runSimulation(
       const networkLatency = network
         ? network.baseLatencyMs + transferLatency + tlsLatency
         : 0
+      const synchronous = !asynchronousInteractions.has(edge.interactionType)
+      if (!synchronous && merged.callerFacing) {
+        endToEndLatency = Math.max(endToEndLatency, pathLatency + networkLatency)
+      }
       incomingContributions.set(edge.toNodeId, [
         ...(incomingContributions.get(edge.toNodeId) ?? []),
-        { rate: edgeRate, latencyMs: pathLatency + networkLatency },
+        {
+          rate: edgeRate,
+          latencyMs: synchronous ? pathLatency + networkLatency : 0,
+          callerFacing: synchronous && merged.callerFacing,
+        },
       ])
       edgeMetrics.push({
         edgeId: edge.id,
@@ -891,6 +916,42 @@ export function runSimulation(
     Math.max(0, endToEndLatency + normalSample(random) * latencyDeviation),
   )
 
+  const sourceRatePerSecond = nodeMetrics
+    .filter((metric) => (incomingCount.get(metric.nodeId) ?? 0) === 0)
+    .reduce((sum, metric) => sum + metric.incomingRatePerSecond, 0)
+  // Sources are demand rather than capacity. Every other node constrains the
+  // flow either by the share of traffic it already sheds or by remaining
+  // headroom against its reported capacity.
+  const bottleneckRatio = nodeMetrics.reduce((minimum: number | undefined, metric) => {
+    if ((incomingCount.get(metric.nodeId) ?? 0) === 0) return minimum
+    if (metric.incomingRatePerSecond <= 0) return minimum
+    const dropping = metric.acceptedRatePerSecond < metric.incomingRatePerSecond - 0.005
+    const ratio = dropping
+      ? metric.acceptedRatePerSecond / metric.incomingRatePerSecond
+      : metric.capacityPerSecond !== undefined
+        ? (metric.capacityPerSecond * (metric.availabilityPercent / 100)) /
+          metric.incomingRatePerSecond
+        : undefined
+    if (ratio === undefined) return minimum
+    return minimum === undefined ? ratio : Math.min(minimum, ratio)
+  }, undefined)
+  const lostEvents = nodeMetrics.reduce(
+    (sum, metric) =>
+      sum +
+      metric.droppedEvents +
+      (metric.queue
+        ? metric.queue.expiredEvents +
+          metric.queue.overflowEvents -
+          metric.queue.deadLetteredEvents
+        : 0),
+    0,
+  )
+  const flowAvailabilityPercent =
+    nodeMetrics.reduce(
+      (product, metric) => product * (metric.availabilityPercent / 100),
+      1,
+    ) * 100
+
   const calibrated =
     profile.observedLatencyMs !== undefined ||
     profile.observedThroughputPerSecond !== undefined
@@ -912,10 +973,13 @@ export function runSimulation(
       ? observedEvents / rawEventsProcessed
       : 1
 
+  const averageLatencyMs = Math.round(endToEndLatency * latencyFactor)
+  const p95LatencyMs = Math.round(percentile(latencySamples, 0.95) * latencyFactor)
+
   return {
     totalEventsProcessed: Math.round(rawEventsProcessed * throughputFactor),
-    averageLatencyMs: Math.round(endToEndLatency * latencyFactor),
-    p95LatencyMs: Math.round(percentile(latencySamples, 0.95) * latencyFactor),
+    averageLatencyMs,
+    p95LatencyMs,
     p99LatencyMs: Math.round(percentile(latencySamples, 0.99) * latencyFactor),
     bottlenecks: warnings.filter(
       (issue) => issue.code === "THROUGHPUT" || issue.code.includes("SATURATION"),
@@ -934,6 +998,7 @@ export function runSimulation(
         "Traffic and failures are deterministic for the same graph and profile.",
         "Node capacity is estimated from configured limits.",
         "Infrastructure clients are not executed by the simulator.",
+        "Reported latency covers the caller-facing synchronous path; caller latency ends at asynchronous boundaries.",
       ],
       recommendations: recommendationsFor(warnings),
       calibrated,
@@ -944,5 +1009,13 @@ export function runSimulation(
           }
         : undefined,
     },
+    goalReport: evaluateGoals(graph.architectureGoals, {
+      averageLatencyMs,
+      p95LatencyMs,
+      sourceRatePerSecond,
+      bottleneckRatio,
+      lostEvents,
+      availabilityPercent: flowAvailabilityPercent,
+    }),
   }
 }

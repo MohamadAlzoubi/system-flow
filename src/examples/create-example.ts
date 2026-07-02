@@ -1,4 +1,10 @@
-import type { FlowGraph, NodeInstance } from "../contracts"
+import type {
+  ArchitectureGoals,
+  DataContract,
+  FlowGraph,
+  NodeInstance,
+} from "../contracts"
+import { inferInteractionDefaults } from "../engine"
 import { nodeRegistry } from "../node-registry"
 
 const profile = {
@@ -21,6 +27,7 @@ export function createExampleFlow(
   name: string,
   types: string[],
   dataType: string,
+  architectureGoals: ArchitectureGoals,
 ): FlowGraph {
   const nodes: NodeInstance[] = types.map((type, index) => ({
     id: `${id}-node-${index + 1}`,
@@ -29,24 +36,46 @@ export function createExampleFlow(
     config: { ...nodeRegistry.get(type)?.defaultConfig },
   }))
 
-  return {
-    id,
-    name,
-    nodes,
-    edges: nodes.slice(1).map((node, index) => ({
+  const edges = nodes.slice(1).map((node, index) => {
+    const base = {
       id: `${id}-edge-${index + 1}`,
       fromNodeId: nodes[index].id,
       toNodeId: node.id,
       dataType,
-    })),
-    dataContracts: [
-      {
-        name: dataType,
-        version: "1.0",
-        schema: { id: "string", timestamp: "string" },
-        estimatedSizeBytes: 1200,
-      },
-    ],
+    }
+    const defaults = inferInteractionDefaults(base, nodes, nodeRegistry)
+    return {
+      ...base,
+      ...defaults,
+      responseDataType:
+        defaults.interactionType === "request-response" ? `${dataType}Ack` : undefined,
+    }
+  })
+
+  const dataContracts: DataContract[] = [
+    {
+      name: dataType,
+      version: "1.0",
+      schema: { id: "string", timestamp: "string" },
+      estimatedSizeBytes: 1200,
+    },
+  ]
+  if (edges.some((edge) => edge.responseDataType === `${dataType}Ack`)) {
+    dataContracts.push({
+      name: `${dataType}Ack`,
+      version: "1.0",
+      schema: { id: "string", accepted: "boolean" },
+      estimatedSizeBytes: 200,
+    })
+  }
+
+  return {
+    id,
+    name,
+    nodes,
+    edges,
+    dataContracts,
     simulationProfile: profile,
+    architectureGoals,
   }
 }
