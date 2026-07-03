@@ -76,6 +76,7 @@ describe("validateGoals", () => {
     const fallible = graph.nodes.find((node) => node.type === "function.service")
     if (!fallible) throw new Error("Fixture requires a function node")
     fallible.config.failureRate = 0
+    graph.failureScenarios = []
     graph.architectureGoals = {
       ...graph.architectureGoals,
       minimumAvailabilityPercent: 99.9,
@@ -93,6 +94,13 @@ describe("validateGoals", () => {
       recoverySeconds: 15,
       degradedCapacityPercent: 100,
     }
+    expect(validateGoals(graph, nodeRegistry)).not.toContainEqual(
+      expect.objectContaining({ code: "GOAL_AVAILABILITY_UNTESTED" }),
+    )
+
+    // A declared failure scenario also counts as exercising the target.
+    graph.nodes[1].availabilityPolicy = undefined
+    graph.failureScenarios = structuredClone(chatMessageFlow.failureScenarios)
     expect(validateGoals(graph, nodeRegistry)).not.toContainEqual(
       expect.objectContaining({ code: "GOAL_AVAILABILITY_UNTESTED" }),
     )

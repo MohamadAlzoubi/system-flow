@@ -1,6 +1,9 @@
 import { z } from "zod"
 import { create } from "zustand"
 import type {
+  ArchitectureBoundary,
+  DataContract,
+  FailureScenario,
   FlowEdge,
   FlowGraph,
   NodeInstance,
@@ -10,7 +13,12 @@ import type {
   SimulationResult,
   ValidationIssue,
 } from "../contracts"
-import { compareSimulations, inferInteractionDefaults } from "../engine"
+import {
+  compareSimulations,
+  inferInteractionDefaults,
+  nextContractVersion,
+  normalizeDataContract,
+} from "../engine"
 import { productViewedFlow } from "../examples"
 import { nodeRegistry } from "../node-registry"
 
@@ -19,6 +27,7 @@ type FlowEditorState = {
   selectedNodeId: string | null
   selectedEdgeId: string | null
   activePanel: "analysis" | "validation"
+  activeScenarioId: string | null
   simulationResult: SimulationResult | null
   simulationBaseline: SimulationBaseline | null
   simulationComparison: SimulationComparison | null
@@ -41,6 +50,22 @@ type FlowEditorState = {
     id: string,
     availabilityPolicy: NodeInstance["availabilityPolicy"],
   ) => void
+  updateNodeResponsibility: (
+    id: string,
+    boundaryId: NodeInstance["boundaryId"],
+    responsibility: NodeInstance["responsibility"],
+  ) => void
+  updateNodeStateOwnership: (
+    id: string,
+    stateOwnership: NodeInstance["stateOwnership"],
+  ) => void
+  upsertBoundary: (boundary: ArchitectureBoundary) => void
+  removeBoundary: (id: string) => void
+  updateEdgeProtection: (id: string, protection: FlowEdge["protection"]) => void
+  updateEdgeFailurePolicy: (id: string, failurePolicy: FlowEdge["failurePolicy"]) => void
+  upsertFailureScenario: (scenario: FailureScenario) => void
+  removeFailureScenario: (id: string) => void
+  setActiveScenario: (id: string | null) => void
   updateSimulationProfile: (profile: SimulationProfile) => void
   updateArchitectureGoals: (goals: FlowGraph["architectureGoals"]) => void
   updateEdgeNetwork: (id: string, network: FlowEdge["network"]) => void
@@ -51,6 +76,17 @@ type FlowEditorState = {
       "interactionType" | "timeoutMs" | "responseDataType" | "deliveryPolicy"
     >,
   ) => void
+  updateEdgeContract: (
+    id: string,
+    dataType: string,
+    dataTypeVersion: string | undefined,
+  ) => void
+  upsertDataContract: (
+    contract: DataContract,
+    previous?: { name: string; version: string },
+  ) => void
+  removeDataContract: (name: string, version: string) => void
+  duplicateDataContract: (name: string, version: string) => void
   addNode: (type: string, position?: NodeInstance["position"]) => void
   addEdge: (edge: FlowEdge) => void
   removeNodes: (ids: string[]) => void
@@ -118,6 +154,8 @@ function loadSavedGraph(): FlowGraph {
             ? edge
             : { ...edge, ...inferInteractionDefaults(edge, graph.nodes, nodeRegistry) },
         ),
+        // Contracts saved as raw schema objects migrate to structured fields.
+        dataContracts: graph.dataContracts.map(normalizeDataContract),
       }
     }
   } catch {
@@ -131,6 +169,7 @@ export const useFlowEditorStore = create<FlowEditorState>((set) => ({
   selectedNodeId: null,
   selectedEdgeId: null,
   activePanel: "analysis",
+  activeScenarioId: null,
   simulationResult: null,
   simulationBaseline: null,
   simulationComparison: null,
@@ -144,6 +183,7 @@ export const useFlowEditorStore = create<FlowEditorState>((set) => ({
       graph,
       selectedNodeId: null,
       selectedEdgeId: null,
+      activeScenarioId: null,
       simulationResult: null,
       simulationBaseline: null,
       simulationComparison: null,
@@ -246,6 +286,186 @@ export const useFlowEditorStore = create<FlowEditorState>((set) => ({
       validationIssues: [],
       isDirty: true,
     })),
+  updateNodeResponsibility: (id, boundaryId, responsibility) =>
+    set((state) => ({
+      graph: {
+        ...state.graph,
+        nodes: state.graph.nodes.map((node) =>
+          node.id === id ? { ...node, boundaryId, responsibility } : node,
+        ),
+      },
+      validationIssues: [],
+      isDirty: true,
+    })),
+  updateNodeStateOwnership: (id, stateOwnership) =>
+    set((state) => ({
+      graph: {
+        ...state.graph,
+        nodes: state.graph.nodes.map((node) =>
+          node.id === id ? { ...node, stateOwnership } : node,
+        ),
+      },
+      validationIssues: [],
+      isDirty: true,
+    })),
+  upsertBoundary: (boundary) =>
+    set((state) => {
+      const boundaries = state.graph.boundaries ?? []
+      const exists = boundaries.some((item) => item.id === boundary.id)
+      return {
+        graph: {
+          ...state.graph,
+          boundaries: exists
+            ? boundaries.map((item) => (item.id === boundary.id ? boundary : item))
+            : [...boundaries, boundary],
+        },
+        validationIssues: [],
+        isDirty: true,
+      }
+    }),
+  removeBoundary: (id) =>
+    set((state) => ({
+      graph: {
+        ...state.graph,
+        boundaries: (state.graph.boundaries ?? [])
+          .filter((boundary) => boundary.id !== id)
+          .map((boundary) =>
+            boundary.parentId === id ? { ...boundary, parentId: undefined } : boundary,
+          ),
+        nodes: state.graph.nodes.map((node) =>
+          node.boundaryId === id ? { ...node, boundaryId: undefined } : node,
+        ),
+      },
+      validationIssues: [],
+      isDirty: true,
+    })),
+  updateEdgeProtection: (id, protection) =>
+    set((state) => ({
+      graph: {
+        ...state.graph,
+        edges: state.graph.edges.map((edge) =>
+          edge.id === id ? { ...edge, protection } : edge,
+        ),
+      },
+      validationIssues: [],
+      isDirty: true,
+    })),
+  updateEdgeFailurePolicy: (id, failurePolicy) =>
+    set((state) => ({
+      graph: {
+        ...state.graph,
+        edges: state.graph.edges.map((edge) =>
+          edge.id === id ? { ...edge, failurePolicy } : edge,
+        ),
+      },
+      simulationResult: null,
+      simulationComparison: null,
+      validationIssues: [],
+      isDirty: true,
+    })),
+  upsertFailureScenario: (scenario) =>
+    set((state) => {
+      const scenarios = state.graph.failureScenarios ?? []
+      const exists = scenarios.some((item) => item.id === scenario.id)
+      return {
+        graph: {
+          ...state.graph,
+          failureScenarios: exists
+            ? scenarios.map((item) => (item.id === scenario.id ? scenario : item))
+            : [...scenarios, scenario],
+        },
+        validationIssues: [],
+        isDirty: true,
+      }
+    }),
+  removeFailureScenario: (id) =>
+    set((state) => ({
+      graph: {
+        ...state.graph,
+        failureScenarios: (state.graph.failureScenarios ?? []).filter(
+          (scenario) => scenario.id !== id,
+        ),
+      },
+      activeScenarioId: state.activeScenarioId === id ? null : state.activeScenarioId,
+      validationIssues: [],
+      isDirty: true,
+    })),
+  setActiveScenario: (activeScenarioId) =>
+    set({ activeScenarioId, simulationResult: null, simulationComparison: null }),
+  updateEdgeContract: (id, dataType, dataTypeVersion) =>
+    set((state) => ({
+      graph: {
+        ...state.graph,
+        edges: state.graph.edges.map((edge) =>
+          edge.id === id ? { ...edge, dataType, dataTypeVersion } : edge,
+        ),
+      },
+      simulationResult: null,
+      simulationComparison: null,
+      validationIssues: [],
+      isDirty: true,
+    })),
+  upsertDataContract: (contract, previous) =>
+    set((state) => {
+      const replaces = (candidate: DataContract) =>
+        previous !== undefined &&
+        candidate.name === previous.name &&
+        candidate.version === previous.version
+      const exists = state.graph.dataContracts.some(replaces)
+      return {
+        graph: {
+          ...state.graph,
+          dataContracts: exists
+            ? state.graph.dataContracts.map((candidate) =>
+                replaces(candidate) ? contract : candidate,
+              )
+            : [...state.graph.dataContracts, contract],
+        },
+        simulationResult: null,
+        simulationComparison: null,
+        validationIssues: [],
+        isDirty: true,
+      }
+    }),
+  removeDataContract: (name, version) =>
+    set((state) => ({
+      graph: {
+        ...state.graph,
+        dataContracts: state.graph.dataContracts.filter(
+          (contract) => contract.name !== name || contract.version !== version,
+        ),
+      },
+      simulationResult: null,
+      simulationComparison: null,
+      validationIssues: [],
+      isDirty: true,
+    })),
+  duplicateDataContract: (name, version) =>
+    set((state) => {
+      const original = state.graph.dataContracts.find(
+        (contract) => contract.name === name && contract.version === version,
+      )
+      if (!original) return state
+      const takenVersions = new Set(
+        state.graph.dataContracts
+          .filter((contract) => contract.name === name)
+          .map((contract) => contract.version),
+      )
+      let nextVersion = nextContractVersion(version)
+      while (takenVersions.has(nextVersion)) {
+        nextVersion = nextContractVersion(nextVersion)
+      }
+      return {
+        graph: {
+          ...state.graph,
+          dataContracts: [
+            ...state.graph.dataContracts,
+            { ...structuredClone(original), version: nextVersion },
+          ],
+        },
+        isDirty: true,
+      }
+    }),
   addNode: (type, position) =>
     set((state) => {
       const definition = nodeRegistry.get(type)

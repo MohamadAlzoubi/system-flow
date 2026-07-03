@@ -1,7 +1,47 @@
 import { Activity, BookmarkPlus, Pause, Play, X } from "lucide-react"
 import { useEffect, useState } from "react"
-import type { GoalReport, MetricDelta } from "../../contracts"
+import type {
+  GoalReport,
+  MetricDelta,
+  UserImpactEntry,
+  UserImpactOutcome,
+} from "../../contracts"
 import { useFlowEditorStore } from "../../store/flow-editor.store"
+
+const impactLabels: Record<UserImpactOutcome, string> = {
+  "rejected-immediately": "Rejected immediately",
+  "timed-out": "Timed out",
+  "accepted-for-later": "Accepted for later",
+  "served-by-fallback": "Served by fallback",
+  "degraded-response": "Degraded response",
+  lost: "Lost",
+  duplicated: "Duplicated",
+  "delayed-beyond-goal": "Delayed beyond goal",
+}
+
+const severeOutcomes = new Set<UserImpactOutcome>([
+  "lost",
+  "timed-out",
+  "rejected-immediately",
+])
+
+function UserImpactSection({ entries }: { entries: UserImpactEntry[] }) {
+  return (
+    <div className="user-impact">
+      <strong>User impact</strong>
+      {entries.map((entry) => (
+        <div
+          className={`impact-row ${severeOutcomes.has(entry.outcome) ? "impact-severe" : ""}`}
+          key={entry.outcome}
+        >
+          <b>{impactLabels[entry.outcome]}</b>
+          <span>{entry.events.toLocaleString()} events</span>
+          <small>{entry.description}</small>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 const goalStatusLabels = {
   passed: "Passed",
@@ -100,6 +140,11 @@ function Delta({
 export function AnalysisPanel() {
   const issues = useFlowEditorStore((state) => state.validationIssues)
   const result = useFlowEditorStore((state) => state.simulationResult)
+  const graph = useFlowEditorStore((state) => state.graph)
+  const activeScenarioId = useFlowEditorStore((state) => state.activeScenarioId)
+  const activeScenario = graph.failureScenarios?.find(
+    (scenario) => scenario.id === activeScenarioId,
+  )
   const setSelectedNode = useFlowEditorStore((state) => state.setSelectedNode)
   const simulationTime = useFlowEditorStore((state) => state.simulationTimeSeconds)
   const setSimulationTime = useFlowEditorStore((state) => state.setSimulationTimeSeconds)
@@ -177,6 +222,14 @@ export function AnalysisPanel() {
         </div>
         {result && (
           <>
+            {activeScenario && (
+              <div className="baseline-label">
+                Failure scenario: {activeScenario.name}
+                {activeScenario.expectedUserImpact
+                  ? ` — expected: ${activeScenario.expectedUserImpact}`
+                  : ""}
+              </div>
+            )}
             <div className="metrics">
               <b>
                 {result.totalEventsProcessed.toLocaleString()}
@@ -197,6 +250,9 @@ export function AnalysisPanel() {
               </b>
             </div>
             {result.goalReport && <GoalReportSection report={result.goalReport} />}
+            {result.userImpact.length > 0 && (
+              <UserImpactSection entries={result.userImpact} />
+            )}
             {result.timeline.some((frame) => frame.queues.length > 0) && (
               <div className="timeline-controls">
                 <button type="button" onClick={() => setPlaying((value) => !value)}>

@@ -39,6 +39,7 @@ describe("runSimulation", () => {
   it("splits traffic by edge percentage and constrains overloaded output", () => {
     const graph = structuredClone(productViewedFlow)
     graph.nodes = [graph.nodes[0], graph.nodes[5], graph.nodes[6]]
+    graph.failureScenarios = []
     graph.nodes[0].config.ratePerSecond = 1000
     graph.nodes[1].config.concurrency = 2
     graph.nodes[1].config.averageProcessingMs = 100
@@ -92,6 +93,7 @@ describe("runSimulation", () => {
     queue.config.orderingRequired = false
     queue.config.partitions = 2
     graph.nodes = [graph.nodes[0], queue, firstWorker, secondWorker]
+    graph.failureScenarios = []
     graph.edges = [
       graph.edges[0],
       {
@@ -130,6 +132,7 @@ describe("runSimulation", () => {
     source.routingPolicy = { mode: "broadcast" }
     sink.mergePolicy = { mode: "wait-all" }
     graph.nodes = [source, slow, fast, sink]
+    graph.failureScenarios = []
     graph.edges = [
       {
         id: "slow",
@@ -226,6 +229,7 @@ describe("runSimulation", () => {
     database.config.readReplicaCount = 2
     database.config.contentionPercentage = 20
     graph.nodes = [source, database]
+    graph.failureScenarios = []
     graph.edges = [
       {
         id: "database-input",
@@ -285,6 +289,7 @@ describe("runSimulation", () => {
     }
     source.config.ratePerSecond = 500
     graph.nodes = [source, dependency]
+    graph.failureScenarios = []
     graph.edges = [
       {
         id: "dependency-call",
@@ -332,6 +337,7 @@ describe("runSimulation", () => {
   it("models regional bandwidth, TLS, and outage constraints", () => {
     const graph = structuredClone(productViewedFlow)
     graph.nodes = [graph.nodes[0], graph.nodes[1]]
+    graph.failureScenarios = []
     graph.edges = [
       {
         id: "regional-edge",
@@ -394,6 +400,7 @@ describe("runSimulation", () => {
       },
     }
     graph.nodes = [source, limiter, breaker]
+    graph.failureScenarios = []
     graph.edges = [
       {
         id: "limited",
@@ -460,6 +467,7 @@ describe("runSimulation", () => {
     graph.simulationProfile.rampUpSeconds = 30
     graph.simulationProfile.payloadSizeBytes = 2400
     graph.nodes = [graph.nodes[0], graph.nodes[1]]
+    graph.failureScenarios = []
     graph.edges = [
       {
         id: "scenario-network",
@@ -497,6 +505,7 @@ describe("runSimulation", () => {
     worker.config.averageProcessingMs = 40000
     worker.config.timeoutMs = 30000
     graph.nodes = [source, worker]
+    graph.failureScenarios = []
     graph.edges = [
       {
         id: "timed-worker",
@@ -706,6 +715,35 @@ describe("runSimulation", () => {
     expect(runSimulation(slowSyncGraph, nodeRegistry).averageLatencyMs).toBeGreaterThan(
       runSimulation(syncGraph, nodeRegistry).averageLatencyMs,
     )
+  })
+
+  it("classifies user impact from the same deterministic metrics", () => {
+    const result = runSimulation(bottleneckFlow, nodeRegistry)
+    const outcomes = new Map(
+      result.userImpact.map((entry) => [entry.outcome, entry.events]),
+    )
+
+    expect(outcomes.get("lost") ?? 0).toBeGreaterThan(0)
+    expect(outcomes.get("duplicated") ?? 0).toBeGreaterThan(0)
+    expect(outcomes.get("accepted-for-later") ?? 0).toBeGreaterThan(0)
+  })
+
+  it("applies the active failure scenario deterministically", () => {
+    const scenario = productViewedFlow.failureScenarios?.[0]
+    if (!scenario) throw new Error("Fixture requires a failure scenario")
+    const base = runSimulation(productViewedFlow, nodeRegistry)
+    const first = runSimulation(productViewedFlow, nodeRegistry, scenario)
+    const second = runSimulation(productViewedFlow, nodeRegistry, scenario)
+
+    expect(first).toEqual(second)
+    expect(first.totalEventsProcessed).toBeLessThan(base.totalEventsProcessed)
+    expect(first.explanation.assumptions).toContainEqual(
+      expect.stringContaining(scenario.name),
+    )
+    // The scenario is applied to a copy; the shared example stays untouched.
+    expect(
+      productViewedFlow.nodes.find((node) => node.type === "worker")?.availabilityPolicy,
+    ).toBeUndefined()
   })
 
   it("compares results against declared architecture goals", () => {

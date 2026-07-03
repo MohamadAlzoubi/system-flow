@@ -4,11 +4,13 @@ const statefulCategories = new Set(["Data", "Messaging", "Streaming"])
 
 function hasFailureScenario(graph: FlowGraph): boolean {
   return (
+    (graph.failureScenarios ?? []).length > 0 ||
     graph.nodes.some(
       (node) =>
         (node.availabilityPolicy && node.availabilityPolicy.mode !== "online") ||
         (Number(node.config.failureRate) || 0) > 0,
-    ) || graph.edges.some((edge) => (edge.network?.outagePercent ?? 0) > 0)
+    ) ||
+    graph.edges.some((edge) => (edge.network?.outagePercent ?? 0) > 0)
   )
 }
 

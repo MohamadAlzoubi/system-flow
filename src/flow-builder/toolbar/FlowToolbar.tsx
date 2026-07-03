@@ -2,6 +2,7 @@ import {
   BarChart3,
   CheckCircle2,
   Download,
+  FileJson2,
   FilePlus2,
   GraduationCap,
   PanelRight,
@@ -20,6 +21,7 @@ import {
 } from "../../examples"
 import { nodeRegistry } from "../../node-registry"
 import { useFlowEditorStore } from "../../store/flow-editor.store"
+import { ContractWorkspace } from "../contracts/ContractWorkspace"
 import { NewFlowDialog } from "./NewFlowDialog"
 
 const examples = [productViewedFlow, purchaseFlow, chatMessageFlow, bottleneckFlow]
@@ -38,6 +40,11 @@ export function FlowToolbar() {
   const setInspectorOpen = useFlowEditorStore((state) => state.setInspectorOpen)
   const setAnalysisOpen = useFlowEditorStore((state) => state.setAnalysisOpen)
   const [isNewFlowOpen, setNewFlowOpen] = useState(false)
+  const [isContractsOpen, setContractsOpen] = useState(false)
+  const activeScenarioId = useFlowEditorStore((state) => state.activeScenarioId)
+  const activeScenario = graph.failureScenarios?.find(
+    (scenario) => scenario.id === activeScenarioId,
+  )
 
   const exportFlow = () => {
     const blob = new Blob([JSON.stringify(graph, null, 2)], {
@@ -93,6 +100,14 @@ export function FlowToolbar() {
         </Button>
         <Button
           variant="outline"
+          onClick={() => setContractsOpen(true)}
+          title="Open the data contract workspace"
+        >
+          <FileJson2 size={16} />
+          Contracts
+        </Button>
+        <Button
+          variant="outline"
           onClick={() => setInspectorOpen(!isInspectorOpen)}
           title={isInspectorOpen ? "Close inspector" : "Open inspector"}
         >
@@ -136,17 +151,23 @@ export function FlowToolbar() {
         </Button>
         <Button
           onClick={() => {
-            const result = runSimulation(graph, nodeRegistry)
+            const result = runSimulation(graph, nodeRegistry, activeScenario)
             setIssues(result.warnings)
             setResult(result)
             setAnalysisOpen(true)
           }}
+          title={
+            activeScenario
+              ? `Run with failure scenario: ${activeScenario.name}`
+              : "Run simulation"
+          }
         >
           <Play size={16} />
-          Run simulation
+          {activeScenario ? "Run scenario" : "Run simulation"}
         </Button>
       </div>
       {isNewFlowOpen && <NewFlowDialog onClose={() => setNewFlowOpen(false)} />}
+      {isContractsOpen && <ContractWorkspace onClose={() => setContractsOpen(false)} />}
     </header>
   )
 }

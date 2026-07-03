@@ -23,4 +23,63 @@ export const purchaseFlow = createExampleFlow(
     maximumRecoveryTimeSeconds: 300,
     orderingRequirement: "none",
   },
+  {
+    kind: "command",
+    description: "Requests fulfillment of a completed checkout.",
+    fields: [
+      {
+        name: "orderId",
+        type: "string",
+        required: true,
+        description: "Identifies the order; retries must not duplicate it.",
+        example: "ord_20260702_183",
+      },
+      {
+        name: "items",
+        type: "array",
+        required: true,
+        description: "Purchased product identifiers and quantities.",
+        example: [{ productId: "prod_482", quantity: 1 }],
+      },
+      {
+        name: "amount",
+        type: "number",
+        required: true,
+        description: "Total charge in the smallest currency unit.",
+        example: 12900,
+      },
+      {
+        name: "currency",
+        type: "string",
+        required: true,
+        example: "EUR",
+      },
+      {
+        name: "placedAt",
+        type: "timestamp",
+        required: true,
+        description: "When checkout completed.",
+      },
+    ],
+    idempotencyKey: "orderId",
+    correlationKey: "orderId",
+  },
+  "checkout-team",
 )
+
+purchaseFlow.failureScenarios = [
+  {
+    id: "purchase-psp-outage",
+    name: "Payment provider unavailable",
+    kind: "dependency-unavailable",
+    affectedNodeIds: [purchaseFlow.nodes[6].id],
+    affectedBoundaryIds: [],
+    startSeconds: 60,
+    durationSeconds: 90,
+    recoverySeconds: 30,
+    expectedResponse:
+      "Retries back off; orders wait in the queue until the provider returns.",
+    expectedUserImpact: "Order confirmation is delayed; no order is charged twice.",
+    recoveryBehavior: "Queued orders drain after the provider recovers.",
+  },
+]

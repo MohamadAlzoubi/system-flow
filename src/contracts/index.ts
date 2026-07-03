@@ -1,14 +1,43 @@
 export type {
+  ArchitectureBoundary,
+  BoundaryKind,
+  CacheInvalidation,
+  ConflictResolution,
+  ConsistencyModel,
+  DataClassification,
+  ImplementationStatus,
+  NodeResponsibility,
+  StateOwnership,
+} from "./architecture-boundary"
+export type {
   ArchitectureGoals,
   GoalEvaluation,
   GoalReport,
   GoalStatus,
   OrderingRequirement,
 } from "./architecture-goals"
-export type { DataContract } from "./data-contract"
+export type {
+  ArchitectureRule,
+  RuleAcceptance,
+  RuleCategory,
+  RuleSeverity,
+} from "./architecture-rule"
+export type {
+  ContractCompatibility,
+  ContractField,
+  ContractFieldType,
+  ContractKind,
+  DataContract,
+} from "./data-contract"
+export type {
+  FailureScenario,
+  FailureScenarioKind,
+  UserImpactOutcome,
+} from "./failure-scenario"
 export type {
   DeliveryPolicy,
   EdgeNetworkPolicy,
+  FailurePolicy,
   FlowEdge,
   FlowGraph,
   InteractionType,
@@ -44,5 +73,6 @@ export type {
   SimulationResult,
   SimulationStatus,
   TrafficPattern,
+  UserImpactEntry,
 } from "./simulation"
 export type { ValidationIssue } from "./validation"

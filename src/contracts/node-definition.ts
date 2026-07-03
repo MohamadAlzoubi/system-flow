@@ -1,4 +1,5 @@
 import type { ZodType } from "zod"
+import type { NodeResponsibility, StateOwnership } from "./architecture-boundary"
 import type { SimulationProfile } from "./simulation"
 
 export type NodeInstance = {
@@ -9,6 +10,10 @@ export type NodeInstance = {
   routingPolicy?: RoutingPolicy
   mergePolicy?: MergePolicy
   availabilityPolicy?: AvailabilityPolicy
+  /** Membership in an architecture boundary. */
+  boundaryId?: string
+  responsibility?: NodeResponsibility
+  stateOwnership?: StateOwnership
 }
 
 export type AvailabilityMode = "online" | "offline" | "scheduled" | "degraded"

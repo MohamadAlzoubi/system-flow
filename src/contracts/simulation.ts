@@ -1,5 +1,12 @@
 import type { GoalReport } from "./architecture-goals"
+import type { UserImpactOutcome } from "./failure-scenario"
 import type { ValidationIssue } from "./validation"
+
+export type UserImpactEntry = {
+  outcome: UserImpactOutcome
+  events: number
+  description: string
+}
 
 export type TrafficPattern = "steady" | "burst" | "daily-peak" | "random"
 
@@ -33,6 +40,7 @@ export type SimulationResult = {
   timeline: SimulationFrame[]
   explanation: SimulationExplanation
   goalReport?: GoalReport
+  userImpact: UserImpactEntry[]
 }
 
 export type SimulationExplanation = {

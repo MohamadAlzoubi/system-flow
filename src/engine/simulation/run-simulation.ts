@@ -1,5 +1,6 @@
 import type {
   EdgeSimulationMetrics,
+  FailureScenario,
   FlowGraph,
   NodeDefinition,
   NodeInstance,
@@ -11,7 +12,10 @@ import type {
   SimulationResult,
   ValidationIssue,
 } from "../../contracts"
+import { resolveEdgeContract } from "../contracts/contract-versions"
 import { validateFlow } from "../validation/validate-flow"
+import { applyFailureScenario } from "./apply-failure-scenario"
+import { classifyUserImpact } from "./classify-user-impact"
 import { evaluateGoals } from "./evaluate-goals"
 
 const number = (value: unknown) => Number(value)
@@ -184,9 +188,11 @@ function mergeContributions(
 }
 
 export function runSimulation(
-  graph: FlowGraph,
+  baseGraph: FlowGraph,
   registry: ReadonlyMap<string, NodeDefinition>,
+  scenario?: FailureScenario,
 ): SimulationResult {
+  const graph = scenario ? applyFailureScenario(baseGraph, scenario) : baseGraph
   const warnings: ValidationIssue[] = validateFlow(graph, registry)
   const profile = graph.simulationProfile
   if (warnings.some((issue) => issue.severity === "error")) {
@@ -208,6 +214,7 @@ export function runSimulation(
         recommendations: [],
         calibrated: false,
       },
+      userImpact: [],
     }
   }
   const nodes = new Map(graph.nodes.map((node) => [node.id, node]))
@@ -242,6 +249,7 @@ export function runSimulation(
   let memory = 0
   let endToEndLatency = 0
   let latencyVariance = 0
+  let fallbackEvents = 0
   const timeline: SimulationFrame[] = []
   const scalingServices = new Map<string, NonNullable<NodeSimulationResult["scaling"]>>()
   const datastoreStates = new Map<
@@ -591,8 +599,7 @@ export function runSimulation(
       const requestedEdgeRate = acceptedRate * (percentage / 100)
       const dataSizeBytes =
         profile.payloadSizeBytes ??
-        graph.dataContracts.find((contract) => contract.name === edge.dataType)
-          ?.estimatedSizeBytes ??
+        resolveEdgeContract(graph.dataContracts, edge)?.estimatedSizeBytes ??
         0
       const network = edge.network
       const availability = network ? 1 - network.outagePercent / 100 : 1
@@ -601,6 +608,9 @@ export function runSimulation(
           ? (network.bandwidthMbps * 1_000_000) / (dataSizeBytes * 8)
           : Number.POSITIVE_INFINITY
       const edgeRate = Math.min(requestedEdgeRate * availability, bandwidthCapacity)
+      if (routingMode === "failover" && index > 0 && edgeRate > 0) {
+        fallbackEvents += edgeRate * profile.durationSeconds
+      }
       const transferLatency =
         network && dataSizeBytes > 0
           ? (dataSizeBytes * 8 * 1000) / (network.bandwidthMbps * 1_000_000)
@@ -975,9 +985,33 @@ export function runSimulation(
 
   const averageLatencyMs = Math.round(endToEndLatency * latencyFactor)
   const p95LatencyMs = Math.round(percentile(latencySamples, 0.95) * latencyFactor)
+  const totalEventsProcessed = Math.round(rawEventsProcessed * throughputFactor)
+  const goalReport = evaluateGoals(graph.architectureGoals, {
+    averageLatencyMs,
+    p95LatencyMs,
+    sourceRatePerSecond,
+    bottleneckRatio,
+    lostEvents,
+    availabilityPercent: flowAvailabilityPercent,
+  })
+  const userImpact = classifyUserImpact(nodeMetrics, {
+    timedOutNodeIds: new Set(
+      [...scalingServices]
+        .filter(([, scaling]) => scaling.limitingResource === "timeout")
+        .map(([nodeId]) => nodeId),
+    ),
+    degradedNodeIds: new Set(
+      graph.nodes
+        .filter((node) => node.availabilityPolicy?.mode === "degraded")
+        .map((node) => node.id),
+    ),
+    fallbackEvents,
+    processedEvents: totalEventsProcessed,
+    goalReport,
+  })
 
   return {
-    totalEventsProcessed: Math.round(rawEventsProcessed * throughputFactor),
+    totalEventsProcessed,
     averageLatencyMs,
     p95LatencyMs,
     p99LatencyMs: Math.round(percentile(latencySamples, 0.99) * latencyFactor),
@@ -999,6 +1033,11 @@ export function runSimulation(
         "Node capacity is estimated from configured limits.",
         "Infrastructure clients are not executed by the simulator.",
         "Reported latency covers the caller-facing synchronous path; caller latency ends at asynchronous boundaries.",
+        ...(scenario
+          ? [
+              `Failure scenario "${scenario.name}" (${scenario.kind}) is applied from ${scenario.startSeconds}s for ${scenario.durationSeconds}s.`,
+            ]
+          : []),
       ],
       recommendations: recommendationsFor(warnings),
       calibrated,
@@ -1009,13 +1048,7 @@ export function runSimulation(
           }
         : undefined,
     },
-    goalReport: evaluateGoals(graph.architectureGoals, {
-      averageLatencyMs,
-      p95LatencyMs,
-      sourceRatePerSecond,
-      bottleneckRatio,
-      lostEvents,
-      availabilityPercent: flowAvailabilityPercent,
-    }),
+    goalReport,
+    userImpact,
   }
 }

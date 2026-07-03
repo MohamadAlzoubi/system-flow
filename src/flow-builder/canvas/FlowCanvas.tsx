@@ -89,6 +89,10 @@ export function FlowCanvas() {
         data: {
           nodeType: node.type,
           subtitle: String(node.config.eventType ?? node.config.queueName ?? ""),
+          boundaryLabel: graph.boundaries?.find(
+            (boundary) => boundary.id === node.boundaryId,
+          )?.label,
+          owner: node.responsibility?.owner,
           metrics: nodeMetrics.get(node.id),
           queueFrame: queueFrames.get(node.id),
           serviceFrame: serviceFrames.get(node.id),
@@ -100,6 +104,7 @@ export function FlowCanvas() {
     [
       availabilityFrames,
       datastoreFrames,
+      graph.boundaries,
       graph.nodes,
       nodeMetrics,
       queueFrames,

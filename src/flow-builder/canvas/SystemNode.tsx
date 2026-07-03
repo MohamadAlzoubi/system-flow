@@ -105,6 +105,11 @@ export function SystemNode({ data, selected }: NodeProps) {
                           ? `${metrics.incomingRatePerSecond.toLocaleString()}/s · ${metrics.capacityPerSecond ? `${Math.round(metrics.utilizationPercent ?? 0)}%` : `${metrics.latencyMs} ms`}`
                           : String(data.subtitle || definition?.category)}
         </small>
+        {(data.boundaryLabel !== undefined || data.owner !== undefined) && (
+          <em className="node-meta">
+            {[data.boundaryLabel, data.owner].filter(Boolean).join(" · ")}
+          </em>
+        )}
       </div>
       <Handle type="source" position={Position.Right} />
     </div>
