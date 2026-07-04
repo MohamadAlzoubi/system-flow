@@ -1,3 +1,6 @@
+export { generateBlueprint } from "./blueprint/generate-blueprint"
+export { renderBlueprintHtml } from "./blueprint/render-html"
+export { renderBlueprintMarkdown } from "./blueprint/render-markdown"
 export { buildContractExample } from "./contracts/contract-example"
 export {
   compareContractVersions,
@@ -8,6 +11,12 @@ export {
 export { normalizeDataContract } from "./contracts/normalize-data-contract"
 export type { InteractionDefaults } from "./graph/infer-interaction-defaults"
 export { inferInteractionDefaults } from "./graph/infer-interaction-defaults"
+export type { RuleOptions } from "./rules/evaluate-rules"
+export {
+  evaluateRules,
+  findAcceptance,
+  findingKey,
+} from "./rules/evaluate-rules"
 export {
   affectedNodeIdsFor,
   applyFailureScenario,

@@ -1,9 +1,12 @@
 import {
   BarChart3,
+  BookMarked,
   CheckCircle2,
+  ClipboardCheck,
   Download,
   FileJson2,
   FilePlus2,
+  FileText,
   GraduationCap,
   PanelRight,
   Play,
@@ -21,7 +24,10 @@ import {
 } from "../../examples"
 import { nodeRegistry } from "../../node-registry"
 import { useFlowEditorStore } from "../../store/flow-editor.store"
+import { BlueprintWorkspace } from "../blueprint/BlueprintWorkspace"
 import { ContractWorkspace } from "../contracts/ContractWorkspace"
+import { DecisionsWorkspace } from "../decisions/DecisionsWorkspace"
+import { ReviewPanel } from "../review/ReviewPanel"
 import { NewFlowDialog } from "./NewFlowDialog"
 
 const examples = [productViewedFlow, purchaseFlow, chatMessageFlow, bottleneckFlow]
@@ -41,6 +47,9 @@ export function FlowToolbar() {
   const setAnalysisOpen = useFlowEditorStore((state) => state.setAnalysisOpen)
   const [isNewFlowOpen, setNewFlowOpen] = useState(false)
   const [isContractsOpen, setContractsOpen] = useState(false)
+  const [isReviewOpen, setReviewOpen] = useState(false)
+  const [isDecisionsOpen, setDecisionsOpen] = useState(false)
+  const [isBlueprintOpen, setBlueprintOpen] = useState(false)
   const activeScenarioId = useFlowEditorStore((state) => state.activeScenarioId)
   const activeScenario = graph.failureScenarios?.find(
     (scenario) => scenario.id === activeScenarioId,
@@ -108,6 +117,30 @@ export function FlowToolbar() {
         </Button>
         <Button
           variant="outline"
+          onClick={() => setReviewOpen(true)}
+          title="Run the architecture review"
+        >
+          <ClipboardCheck size={16} />
+          Review
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => setDecisionsOpen(true)}
+          title="Open decisions and assumptions"
+        >
+          <BookMarked size={16} />
+          Decisions
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => setBlueprintOpen(true)}
+          title="Generate the implementation blueprint"
+        >
+          <FileText size={16} />
+          Blueprint
+        </Button>
+        <Button
+          variant="outline"
           onClick={() => setInspectorOpen(!isInspectorOpen)}
           title={isInspectorOpen ? "Close inspector" : "Open inspector"}
         >
@@ -168,6 +201,9 @@ export function FlowToolbar() {
       </div>
       {isNewFlowOpen && <NewFlowDialog onClose={() => setNewFlowOpen(false)} />}
       {isContractsOpen && <ContractWorkspace onClose={() => setContractsOpen(false)} />}
+      {isReviewOpen && <ReviewPanel onClose={() => setReviewOpen(false)} />}
+      {isDecisionsOpen && <DecisionsWorkspace onClose={() => setDecisionsOpen(false)} />}
+      {isBlueprintOpen && <BlueprintWorkspace onClose={() => setBlueprintOpen(false)} />}
     </header>
   )
 }

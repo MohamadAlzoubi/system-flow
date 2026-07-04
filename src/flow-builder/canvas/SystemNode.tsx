@@ -33,6 +33,7 @@ import type {
   QueueFrameMetrics,
   ResilienceFrameMetrics,
   ServiceFrameMetrics,
+  TrafficFrameMetrics,
 } from "../../contracts"
 import { nodeRegistry } from "../../node-registry"
 
@@ -75,6 +76,7 @@ export function SystemNode({ data, selected }: NodeProps) {
   const datastoreFrame = data.datastoreFrame as DataStoreFrameMetrics | undefined
   const resilienceFrame = data.resilienceFrame as ResilienceFrameMetrics | undefined
   const availabilityFrame = data.availabilityFrame as AvailabilityFrameMetrics | undefined
+  const trafficFrame = data.trafficFrame as TrafficFrameMetrics | undefined
 
   return (
     <div
@@ -97,13 +99,15 @@ export function SystemNode({ data, selected }: NodeProps) {
                   ? `${datastoreFrame.primaryState} · ${Math.round(datastoreFrame.connectionUtilizationPercent)}% connections`
                   : queueFrame
                     ? `${queueFrame.depth.toLocaleString()} queued · ${queueFrame.activePartitions} partitions · ${Math.round(queueFrame.averageMessageAgeMs / 1000)}s old`
-                    : metrics?.resilience
-                      ? `${Math.round(metrics.resilience.availabilityPercent)}% available · ${Math.round(metrics.resilience.rejectedPerSecond)}/s rejected`
-                      : metrics?.datastore
-                        ? `${metrics.datastore.limitingResource} · ${Math.round(metrics.capacityPerSecond ?? 0).toLocaleString()}/s`
-                        : metrics
-                          ? `${metrics.incomingRatePerSecond.toLocaleString()}/s · ${metrics.capacityPerSecond ? `${Math.round(metrics.utilizationPercent ?? 0)}%` : `${metrics.latencyMs} ms`}`
-                          : String(data.subtitle || definition?.category)}
+                    : trafficFrame
+                      ? `${trafficFrame.inputRatePerSecond.toLocaleString()}/s in · ${trafficFrame.acceptedRatePerSecond.toLocaleString()}/s served`
+                      : metrics?.resilience
+                        ? `${Math.round(metrics.resilience.availabilityPercent)}% available · ${Math.round(metrics.resilience.rejectedPerSecond)}/s rejected`
+                        : metrics?.datastore
+                          ? `${metrics.datastore.limitingResource} · ${Math.round(metrics.capacityPerSecond ?? 0).toLocaleString()}/s`
+                          : metrics
+                            ? `${metrics.incomingRatePerSecond.toLocaleString()}/s · ${metrics.capacityPerSecond ? `${Math.round(metrics.utilizationPercent ?? 0)}%` : `${metrics.latencyMs} ms`}`
+                            : String(data.subtitle || definition?.category)}
         </small>
         {(data.boundaryLabel !== undefined || data.owner !== undefined) && (
           <em className="node-meta">

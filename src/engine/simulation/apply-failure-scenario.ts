@@ -97,6 +97,7 @@ export function applyFailureScenario(
         profile.requestsPerSecond * (scenario.trafficMultiplier ?? 4)
       profile.burstDurationSeconds = scenario.durationSeconds
       profile.rampUpSeconds = Math.min(30, scenario.durationSeconds)
+      profile.burstStartSeconds = scenario.startSeconds
       break
     }
     case "datastore-failover":

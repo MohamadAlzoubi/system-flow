@@ -2,6 +2,7 @@ import type { ArchitectureBoundary } from "./architecture-boundary"
 import type { ArchitectureGoals } from "./architecture-goals"
 import type { RuleAcceptance } from "./architecture-rule"
 import type { DataContract } from "./data-contract"
+import type { ArchitectureAssumption, DecisionRecord } from "./decision-record"
 import type { FailureScenario } from "./failure-scenario"
 import type { NodeInstance } from "./node-definition"
 import type { SimulationProfile } from "./simulation"
@@ -75,4 +76,6 @@ export type FlowGraph = {
   boundaries?: ArchitectureBoundary[]
   failureScenarios?: FailureScenario[]
   ruleAcceptances?: RuleAcceptance[]
+  decisionRecords?: DecisionRecord[]
+  assumptions?: ArchitectureAssumption[]
 }

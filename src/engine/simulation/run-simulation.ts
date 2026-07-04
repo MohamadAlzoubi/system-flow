@@ -10,6 +10,7 @@ import type {
   SimulationFrame,
   SimulationRecommendation,
   SimulationResult,
+  TrafficFrameMetrics,
   ValidationIssue,
 } from "../../contracts"
 import { resolveEdgeContract } from "../contracts/contract-versions"
@@ -17,6 +18,7 @@ import { validateFlow } from "../validation/validate-flow"
 import { applyFailureScenario } from "./apply-failure-scenario"
 import { classifyUserImpact } from "./classify-user-impact"
 import { evaluateGoals } from "./evaluate-goals"
+import { trafficRateAt } from "./traffic-pattern"
 
 const number = (value: unknown) => Number(value)
 const round = (value: number) => Number(value.toFixed(2))
@@ -283,8 +285,12 @@ export function runSimulation(
       payloadSizeBytes: number
       durable: boolean
       activePartitions: number
+      consumers: { id: string; staticCapacity: number }[]
     }
   >()
+  // Static per-node facts the frame engine modulates with time-varying factors.
+  const staticCapacities = new Map<string, number | undefined>()
+  const sourceBaselines = new Map<string, number>()
   if (
     (profile.duplicateEventPercent ?? 0) > 0 ||
     (profile.malformedEventPercent ?? 0) > 0
@@ -301,6 +307,14 @@ export function runSimulation(
     const definition = node && registry.get(node.type)
     if (!node || !definition) continue
     const isSource = (incomingCount.get(nodeId) ?? 0) === 0
+    if (isSource) {
+      sourceBaselines.set(
+        nodeId,
+        node.type === "event.source"
+          ? number(node.config.ratePerSecond)
+          : profile.requestsPerSecond,
+      )
+    }
     const configuredSourceRate =
       node.type === "event.source"
         ? effectiveTrafficRate(number(node.config.ratePerSecond), profile)
@@ -325,31 +339,41 @@ export function runSimulation(
       resilienceStates.set(nodeId, { metrics: result.resilience, inputRate })
     }
     const capacity = result.throughputPerSecond
+    staticCapacities.set(nodeId, capacity)
     const effectiveCapacity = (capacity ?? inputRate) * availabilityFactor
     let acceptedRate = Math.min(inputRate, effectiveCapacity)
     if (node.type === "rabbitmq.queue") {
-      const consumerCapacities = (outgoing.get(nodeId) ?? [])
-        .map((edge) => {
-          const target = nodes.get(edge.toNodeId)
-          const targetDefinition = target && registry.get(target.type)
-          if (!target || !targetDefinition) return 0
-          const targetResult = targetDefinition.simulate(target.config, {
-            profile,
-            ratePerSecond: inputRate,
-          })
-          const processingMs = number(target.config.averageProcessingMs)
-          const prefetchCapacity =
-            processingMs > 0
-              ? (number(node.config.prefetch) *
-                  Math.max(1, number(target.config.concurrency)) *
-                  1000) /
-                processingMs
-              : Number.POSITIVE_INFINITY
-          return (
-            Math.min(targetResult.throughputPerSecond ?? inputRate, prefetchCapacity) *
-            averageAvailability(target, profile.durationSeconds)
-          )
+      const consumerEstimates = (outgoing.get(nodeId) ?? []).map((edge) => {
+        const target = nodes.get(edge.toNodeId)
+        const targetDefinition = target && registry.get(target.type)
+        if (!target || !targetDefinition) {
+          return { id: edge.toNodeId, staticCapacity: 0, available: 0 }
+        }
+        const targetResult = targetDefinition.simulate(target.config, {
+          profile,
+          ratePerSecond: inputRate,
         })
+        const processingMs = number(target.config.averageProcessingMs)
+        const prefetchCapacity =
+          processingMs > 0
+            ? (number(node.config.prefetch) *
+                Math.max(1, number(target.config.concurrency)) *
+                1000) /
+              processingMs
+            : Number.POSITIVE_INFINITY
+        const staticCapacity = Math.min(
+          targetResult.throughputPerSecond ?? inputRate,
+          prefetchCapacity,
+        )
+        return {
+          id: target.id,
+          staticCapacity,
+          available:
+            staticCapacity * averageAvailability(target, profile.durationSeconds),
+        }
+      })
+      const consumerCapacities = consumerEstimates
+        .map((estimate) => estimate.available)
         .sort((left, right) => right - left)
       const activePartitions = Math.min(
         node.config.orderingRequired === true ? 1 : number(node.config.partitions),
@@ -422,6 +446,10 @@ export function runSimulation(
         payloadSizeBytes,
         durable: node.config.durable === true,
         activePartitions,
+        consumers: consumerEstimates.map(({ id, staticCapacity }) => ({
+          id,
+          staticCapacity,
+        })),
       })
     }
     const utilization =
@@ -608,9 +636,6 @@ export function runSimulation(
           ? (network.bandwidthMbps * 1_000_000) / (dataSizeBytes * 8)
           : Number.POSITIVE_INFINITY
       const edgeRate = Math.min(requestedEdgeRate * availability, bandwidthCapacity)
-      if (routingMode === "failover" && index > 0 && edgeRate > 0) {
-        fallbackEvents += edgeRate * profile.durationSeconds
-      }
       const transferLatency =
         network && dataSizeBytes > 0
           ? (dataSizeBytes * 8 * 1000) / (network.bandwidthMbps * 1_000_000)
@@ -664,90 +689,281 @@ export function runSimulation(
 
   const frameStep = Math.max(1, Math.ceil(profile.durationSeconds / 60))
   const queueState = new Map<string, QueueFrameMetrics>()
+  const trafficRandom = createRandom(
+    seedFrom(`${graph.id}:traffic:${profile.durationSeconds}`),
+  )
+  const qualityFactor =
+    (1 + (profile.duplicateEventPercent ?? 0) / 100) *
+    (1 - (profile.malformedEventPercent ?? 0) / 100)
+  // Nodes whose callers time out (rather than silently losing work) when the
+  // node is down: some synchronous inbound edge declares a timeout.
+  const timeoutProtectedNodes = new Set<string>()
+  for (const edge of graph.edges) {
+    if (
+      !asynchronousInteractions.has(edge.interactionType) &&
+      (edge.timeoutMs ?? edge.failurePolicy?.timeoutMs) !== undefined
+    ) {
+      timeoutProtectedNodes.add(edge.toNodeId)
+    }
+  }
+  const downProtectedNodes = new Set<string>()
+  let frameTimedOutEvents = 0
+  let lastTraffic: TrafficFrameMetrics[] = []
+  let lastSourceRate = 0
+
+  // Health of a node at one moment: availability policy, datastore failover,
+  // and circuit state all gate capacity per frame.
+  const nodeFactorAt = (nodeId: string, timeSeconds: number): number => {
+    const node = nodes.get(nodeId)
+    if (!node) return 0
+    let factor = availabilityAt(node, timeSeconds).factor
+    const datastore = datastoreStates.get(nodeId)
+    if (
+      datastore &&
+      datastore.failoverSeconds > 0 &&
+      timeSeconds < datastore.failoverSeconds
+    ) {
+      factor = 0
+    }
+    const resilience = resilienceStates.get(nodeId)
+    if (resilience?.metrics.circuitOpen) {
+      const recovery = resilience.metrics.recoverySeconds
+      if (timeSeconds < recovery * 0.8) factor = 0
+      else if (timeSeconds < recovery) factor = Math.min(factor, 0.1)
+    }
+    return factor
+  }
+  const nodeCapacityAt = (nodeId: string, timeSeconds: number): number | undefined => {
+    const scaling = scalingServices.get(nodeId)
+    if (scaling) {
+      const replicas =
+        timeSeconds >= scaling.readyAfterSeconds
+          ? scaling.desiredReplicas
+          : scaling.initialReplicas
+      return replicas * scaling.capacityPerReplica
+    }
+    return staticCapacities.get(nodeId)
+  }
+  const staticallyHealthy = (nodeId: string): boolean => {
+    const node = nodes.get(nodeId)
+    if (!node) return false
+    return (
+      (number(node.config.failureRate) || 0) < 1 &&
+      !(
+        node.type === "external.api" &&
+        number(node.config.averageLatencyMs) > number(node.config.timeoutMs)
+      )
+    )
+  }
+
   for (let time = 0; time <= profile.durationSeconds; time += frameStep) {
+    const frameTime = Math.min(time, profile.durationSeconds)
     const elapsed =
       time === 0 ? 0 : Math.min(frameStep, profile.durationSeconds - (time - frameStep))
+    const randomFraction = trafficRandom()
+    // Failover detection lags one frame behind the outage it reacts to.
+    const detectionTime = Math.max(0, frameTime - frameStep)
+    const frameInputs = new Map<string, number[]>()
+    const traffic: TrafficFrameMetrics[] = []
     const queues: QueueFrameMetrics[] = []
-    for (const [nodeId, rates] of queueRates) {
-      const previous = queueState.get(nodeId) ?? {
-        nodeId,
-        depth: 0,
-        enqueuedEvents: 0,
-        dequeuedEvents: 0,
-        expiredEvents: 0,
-        deadLetteredEvents: 0,
-        overflowEvents: 0,
-        redeliveredEvents: 0,
-        acknowledgedEvents: 0,
-        deadLetterOverflowEvents: 0,
-        averageMessageAgeMs: 0,
-        publisherConfirmedEvents: 0,
-        persistedBytes: 0,
-        activePartitions: rates.activePartitions,
+    let sourceRate = 0
+
+    for (const nodeId of order) {
+      const node = nodes.get(nodeId)
+      if (!node || !registry.get(node.type)) continue
+      const isSource = (incomingCount.get(nodeId) ?? 0) === 0
+      const inbound = frameInputs.get(nodeId) ?? []
+      const mergeMode = node.mergePolicy?.mode ?? "sum"
+      const input = isSource
+        ? trafficRateAt(
+            sourceBaselines.get(nodeId) ?? 0,
+            profile,
+            frameTime,
+            randomFraction,
+          ) * qualityFactor
+        : inbound.length === 0
+          ? 0
+          : mergeMode === "wait-all"
+            ? Math.min(...inbound)
+            : mergeMode === "first-response"
+              ? Math.max(...inbound)
+              : inbound.reduce((sum, rate) => sum + rate, 0)
+      if (isSource) sourceRate += input
+
+      const factor = nodeFactorAt(nodeId, frameTime)
+      const queueInfo = queueRates.get(nodeId)
+      let accepted = input
+      let output = input
+      if (queueInfo) {
+        // Queue output follows what its consumers can take this frame.
+        const consumerCapacity = queueInfo.consumers.reduce(
+          (sum, consumer) =>
+            sum + consumer.staticCapacity * nodeFactorAt(consumer.id, frameTime),
+          0,
+        )
+        const dequeueCapacity = Math.min(
+          queueInfo.brokerCapacity * factor,
+          queueInfo.consumers.length > 0
+            ? consumerCapacity
+            : queueInfo.brokerCapacity * factor,
+        )
+        const enqueueRate = factor === 0 ? 0 : input
+        const previous = queueState.get(nodeId) ?? {
+          nodeId,
+          depth: 0,
+          enqueuedEvents: 0,
+          dequeuedEvents: 0,
+          expiredEvents: 0,
+          deadLetteredEvents: 0,
+          overflowEvents: 0,
+          redeliveredEvents: 0,
+          acknowledgedEvents: 0,
+          deadLetterOverflowEvents: 0,
+          averageMessageAgeMs: 0,
+          publisherConfirmedEvents: 0,
+          persistedBytes: 0,
+          activePartitions: queueInfo.activePartitions,
+        }
+        const retryEligible = retryOpportunities(
+          elapsed,
+          queueInfo.retryCount,
+          queueInfo.retryInitialDelayMs,
+          queueInfo.retryMaximumDelayMs,
+          queueInfo.retryJitterPercent,
+        )
+        const redelivered =
+          dequeueCapacity * queueInfo.failureRate * Math.max(0, retryEligible) * elapsed
+        const enqueued = enqueueRate * elapsed + redelivered
+        const available = previous.depth + enqueued
+        const acknowledgementFactor =
+          1 + queueInfo.acknowledgementLatencyMs / Math.max(1, elapsed * 1000)
+        const dequeued = Math.min(
+          available,
+          (dequeueCapacity / acknowledgementFactor) * elapsed,
+        )
+        let depth = Math.max(0, available - dequeued)
+        // Little's-law bound: entries beyond inflow times TTL are older than TTL.
+        const ttlLimit =
+          queueInfo.ttlSeconds > 0
+            ? enqueueRate * queueInfo.ttlSeconds
+            : Number.POSITIVE_INFINITY
+        const expired = Math.max(0, depth - ttlLimit)
+        depth -= expired
+        const overflow = Math.max(0, depth - queueInfo.maxSize)
+        depth -= overflow
+        const deadLettered = queueInfo.deadLetter ? expired + overflow : 0
+        const deadLetterSpace = Math.max(
+          0,
+          queueInfo.deadLetterMaxSize - previous.deadLetteredEvents,
+        )
+        const acceptedDeadLetters = Math.min(deadLettered, deadLetterSpace)
+        const deadLetterOverflow = Math.max(0, deadLettered - acceptedDeadLetters)
+        const next = {
+          nodeId,
+          depth: Math.round(depth),
+          enqueuedEvents: Math.round(previous.enqueuedEvents + enqueued),
+          dequeuedEvents: Math.round(previous.dequeuedEvents + dequeued),
+          expiredEvents: Math.round(previous.expiredEvents + expired),
+          deadLetteredEvents: Math.round(
+            previous.deadLetteredEvents + acceptedDeadLetters,
+          ),
+          overflowEvents: Math.round(previous.overflowEvents + overflow),
+          redeliveredEvents: Math.round(previous.redeliveredEvents + redelivered),
+          acknowledgedEvents: Math.round(
+            previous.acknowledgedEvents + dequeued * (1 - queueInfo.failureRate),
+          ),
+          deadLetterOverflowEvents: Math.round(
+            previous.deadLetterOverflowEvents + deadLetterOverflow,
+          ),
+          averageMessageAgeMs:
+            enqueueRate > 0
+              ? Math.round((depth / enqueueRate) * 1000)
+              : previous.averageMessageAgeMs,
+          publisherConfirmedEvents: Math.round(
+            previous.publisherConfirmedEvents + enqueueRate * elapsed,
+          ),
+          persistedBytes: Math.round(
+            previous.persistedBytes +
+              (queueInfo.durable
+                ? enqueueRate * elapsed * queueInfo.payloadSizeBytes
+                : 0),
+          ),
+          activePartitions: queueInfo.activePartitions,
+        }
+        queueState.set(nodeId, next)
+        queues.push(next)
+        accepted = enqueueRate
+        output = elapsed > 0 ? dequeued / elapsed : Math.min(input, dequeueCapacity)
+      } else {
+        const capacityNow = nodeCapacityAt(nodeId, frameTime)
+        const effective = (capacityNow ?? input) * factor
+        accepted = Math.min(input, effective)
+        output = accepted
+        if (input > 0 && factor === 0 && timeoutProtectedNodes.has(nodeId)) {
+          downProtectedNodes.add(nodeId)
+          frameTimedOutEvents += input * elapsed
+        }
       }
-      const retryEligible = retryOpportunities(
-        elapsed,
-        rates.retryCount,
-        rates.retryInitialDelayMs,
-        rates.retryMaximumDelayMs,
-        rates.retryJitterPercent,
-      )
-      const redelivered =
-        rates.outgoing * rates.failureRate * Math.max(0, retryEligible) * elapsed
-      const enqueued = rates.incoming * elapsed + redelivered
-      const available = previous.depth + enqueued
-      const acknowledgementFactor =
-        1 + rates.acknowledgementLatencyMs / Math.max(1, elapsed * 1000)
-      const dequeued = Math.min(
-        available,
-        (rates.outgoing / acknowledgementFactor) * elapsed,
-      )
-      let depth = Math.max(0, available - dequeued)
-      const ttlLimit =
-        rates.ttlSeconds > 0
-          ? rates.incoming * rates.ttlSeconds
-          : Number.POSITIVE_INFINITY
-      const expired = Math.max(0, depth - ttlLimit)
-      depth -= expired
-      const overflow = Math.max(0, depth - rates.maxSize)
-      depth -= overflow
-      const deadLettered = rates.deadLetter ? expired + overflow : 0
-      const deadLetterSpace = Math.max(
-        0,
-        rates.deadLetterMaxSize - previous.deadLetteredEvents,
-      )
-      const acceptedDeadLetters = Math.min(deadLettered, deadLetterSpace)
-      const deadLetterOverflow = Math.max(0, deadLettered - acceptedDeadLetters)
-      const next = {
+      traffic.push({
         nodeId,
-        depth: Math.round(depth),
-        enqueuedEvents: Math.round(previous.enqueuedEvents + enqueued),
-        dequeuedEvents: Math.round(previous.dequeuedEvents + dequeued),
-        expiredEvents: Math.round(previous.expiredEvents + expired),
-        deadLetteredEvents: Math.round(previous.deadLetteredEvents + acceptedDeadLetters),
-        overflowEvents: Math.round(previous.overflowEvents + overflow),
-        redeliveredEvents: Math.round(previous.redeliveredEvents + redelivered),
-        acknowledgedEvents: Math.round(
-          previous.acknowledgedEvents + dequeued * (1 - rates.failureRate),
-        ),
-        deadLetterOverflowEvents: Math.round(
-          previous.deadLetterOverflowEvents + deadLetterOverflow,
-        ),
-        averageMessageAgeMs:
-          rates.incoming > 0 ? Math.round((depth / rates.incoming) * 1000) : 0,
-        publisherConfirmedEvents: Math.round(
-          previous.publisherConfirmedEvents + rates.incoming * elapsed,
-        ),
-        persistedBytes: Math.round(
-          previous.persistedBytes +
-            (rates.durable ? rates.incoming * elapsed * rates.payloadSizeBytes : 0),
-        ),
-        activePartitions: rates.activePartitions,
+        inputRatePerSecond: round(input),
+        acceptedRatePerSecond: round(accepted),
+        droppedRatePerSecond: round(Math.max(0, input - accepted)),
+      })
+
+      const frameEdges = outgoing.get(nodeId) ?? []
+      if (frameEdges.length === 0) continue
+      const frameRoutingMode =
+        node.routingPolicy?.mode ??
+        (frameEdges.some((edge) => edge.trafficPercentage !== undefined)
+          ? "weighted"
+          : "broadcast")
+      const frameSorted = [...frameEdges].sort(
+        (left, right) => (left.priority ?? 0) - (right.priority ?? 0),
+      )
+      const weights =
+        frameRoutingMode === "competing-consumers" && queueInfo
+          ? new Map(
+              frameSorted.map((edge) => [
+                edge.id,
+                (queueInfo.consumers.find((consumer) => consumer.id === edge.toNodeId)
+                  ?.staticCapacity ?? 0) * nodeFactorAt(edge.toNodeId, frameTime),
+              ]),
+            )
+          : undefined
+      const weightTotal = weights
+        ? [...weights.values()].reduce((sum, value) => sum + value, 0)
+        : 0
+      const firstHealthyIndex =
+        frameRoutingMode === "failover"
+          ? frameSorted.findIndex(
+              (edge) =>
+                nodeFactorAt(edge.toNodeId, detectionTime) > 0 &&
+                staticallyHealthy(edge.toNodeId),
+            )
+          : -1
+      for (const [index, edge] of frameSorted.entries()) {
+        let percentage = edge.trafficPercentage ?? 100
+        if (frameRoutingMode === "round-robin") percentage = 100 / frameEdges.length
+        if (frameRoutingMode === "competing-consumers") {
+          percentage =
+            weightTotal > 0
+              ? ((weights?.get(edge.id) ?? 0) / weightTotal) * 100
+              : 100 / frameEdges.length
+        }
+        if (frameRoutingMode === "failover") {
+          percentage = index === firstHealthyIndex ? 100 : 0
+        }
+        const networkAvailability = edge.network
+          ? 1 - edge.network.outagePercent / 100
+          : 1
+        const rate = output * (percentage / 100) * networkAvailability
+        if (frameRoutingMode === "failover" && index > 0 && rate > 0) {
+          fallbackEvents += rate * elapsed
+        }
+        frameInputs.set(edge.toNodeId, [...(frameInputs.get(edge.toNodeId) ?? []), rate])
       }
-      queueState.set(nodeId, next)
-      queues.push(next)
     }
-    const frameTime = Math.min(time, profile.durationSeconds)
     const services = [...scalingServices].map(([nodeId, scaling]) => {
       const ready = frameTime >= scaling.readyAfterSeconds
       const replicas = ready ? scaling.desiredReplicas : scaling.initialReplicas
@@ -819,16 +1035,22 @@ export function runSimulation(
       })
     timeline.push({
       timeSeconds: frameTime,
+      sourceRatePerSecond: round(sourceRate),
+      traffic,
       queues,
       services,
       datastores,
       resilience,
       availability,
     })
+    lastTraffic = traffic
+    lastSourceRate = sourceRate
   }
   if (timeline.at(-1)?.timeSeconds !== profile.durationSeconds) {
     timeline.push({
       timeSeconds: profile.durationSeconds,
+      sourceRatePerSecond: round(lastSourceRate),
+      traffic: lastTraffic,
       queues: [...queueState.values()],
       services: [...scalingServices].map(([nodeId, scaling]) => ({
         nodeId,
@@ -994,12 +1216,21 @@ export function runSimulation(
     lostEvents,
     availabilityPercent: flowAvailabilityPercent,
   })
+  // Frame-observed timeouts beyond what the whole-scenario averages already
+  // attribute to the same down dependencies.
+  const averagedProtectedDrops = nodeMetrics
+    .filter((metric) => downProtectedNodes.has(metric.nodeId))
+    .reduce((sum, metric) => sum + metric.droppedEvents, 0)
   const userImpact = classifyUserImpact(nodeMetrics, {
-    timedOutNodeIds: new Set(
-      [...scalingServices]
+    // Down dependencies with a synchronous timeout convert their drops into
+    // caller timeouts instead of silent loss.
+    timedOutNodeIds: new Set([
+      ...[...scalingServices]
         .filter(([, scaling]) => scaling.limitingResource === "timeout")
         .map(([nodeId]) => nodeId),
-    ),
+      ...downProtectedNodes,
+    ]),
+    timedOutEvents: Math.max(0, frameTimedOutEvents - averagedProtectedDrops),
     degradedNodeIds: new Set(
       graph.nodes
         .filter((node) => node.availabilityPolicy?.mode === "degraded")
@@ -1033,6 +1264,7 @@ export function runSimulation(
         "Node capacity is estimated from configured limits.",
         "Infrastructure clients are not executed by the simulator.",
         "Reported latency covers the caller-facing synchronous path; caller latency ends at asynchronous boundaries.",
+        `Timeline values are estimates integrated in ${frameStep}s frames; node metrics are whole-scenario averages.`,
         ...(scenario
           ? [
               `Failure scenario "${scenario.name}" (${scenario.kind}) is applied from ${scenario.startSeconds}s for ${scenario.durationSeconds}s.`,

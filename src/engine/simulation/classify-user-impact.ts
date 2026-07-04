@@ -7,6 +7,8 @@ export type UserImpactContext = {
   degradedNodeIds: ReadonlySet<string>
   /** Events answered by failover targets instead of the primary path. */
   fallbackEvents: number
+  /** Frame-observed caller timeouts not already covered by node drops. */
+  timedOutEvents: number
   processedEvents: number
   goalReport?: GoalReport
 }
@@ -21,7 +23,7 @@ export function classifyUserImpact(
   context: UserImpactContext,
 ): UserImpactEntry[] {
   let rejected = 0
-  let timedOut = 0
+  let timedOut = context.timedOutEvents
   let lost = 0
   let backlog = 0
   let deadLettered = 0

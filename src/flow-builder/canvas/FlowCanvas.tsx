@@ -70,6 +70,10 @@ export function FlowCanvas() {
       ),
     [frame],
   )
+  const trafficFrames = useMemo(
+    () => new Map(frame?.traffic.map((traffic) => [traffic.nodeId, traffic])),
+    [frame],
+  )
   const nodeMetrics = useMemo(
     () => new Map(result?.nodeMetrics.map((metric) => [metric.nodeId, metric])),
     [result],
@@ -99,6 +103,8 @@ export function FlowCanvas() {
           datastoreFrame: datastoreFrames.get(node.id),
           resilienceFrame: resilienceFrames.get(node.id),
           availabilityFrame: availabilityFrames.get(node.id),
+          // Traffic frames only surface while the user scrubs the timeline.
+          trafficFrame: simulationTime > 0 ? trafficFrames.get(node.id) : undefined,
         },
       })),
     [
@@ -111,6 +117,8 @@ export function FlowCanvas() {
       resilienceFrames,
       selectedNodeId,
       serviceFrames,
+      simulationTime,
+      trafficFrames,
     ],
   )
   const edges = useMemo<Edge[]>(

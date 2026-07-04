@@ -1,12 +1,15 @@
 import { z } from "zod"
 import { create } from "zustand"
 import type {
+  ArchitectureAssumption,
   ArchitectureBoundary,
   DataContract,
+  DecisionRecord,
   FailureScenario,
   FlowEdge,
   FlowGraph,
   NodeInstance,
+  RuleAcceptance,
   SimulationBaseline,
   SimulationComparison,
   SimulationProfile,
@@ -66,6 +69,12 @@ type FlowEditorState = {
   upsertFailureScenario: (scenario: FailureScenario) => void
   removeFailureScenario: (id: string) => void
   setActiveScenario: (id: string | null) => void
+  acceptRuleFinding: (acceptance: RuleAcceptance, record?: DecisionRecord) => void
+  revokeRuleAcceptance: (ruleCode: string, targetKey: string) => void
+  upsertDecisionRecord: (record: DecisionRecord) => void
+  removeDecisionRecord: (id: string) => void
+  upsertAssumption: (assumption: ArchitectureAssumption) => void
+  removeAssumption: (id: string) => void
   updateSimulationProfile: (profile: SimulationProfile) => void
   updateArchitectureGoals: (goals: FlowGraph["architectureGoals"]) => void
   updateEdgeNetwork: (id: string, network: FlowEdge["network"]) => void
@@ -392,6 +401,113 @@ export const useFlowEditorStore = create<FlowEditorState>((set) => ({
     })),
   setActiveScenario: (activeScenarioId) =>
     set({ activeScenarioId, simulationResult: null, simulationComparison: null }),
+  acceptRuleFinding: (acceptance, record) =>
+    set((state) => {
+      // An accepted risk becomes a decision record so it survives export;
+      // the id is derived so reopening can supersede the same record.
+      const recordId = `acceptance:${acceptance.ruleCode}:${acceptance.targetKey}`
+      const records = state.graph.decisionRecords ?? []
+      const nextRecords = record
+        ? [
+            ...records.filter((existing) => existing.id !== recordId),
+            { ...record, id: recordId, status: "accepted" as const },
+          ]
+        : records
+      return {
+        graph: {
+          ...state.graph,
+          ruleAcceptances: [
+            ...(state.graph.ruleAcceptances ?? []).filter(
+              (existing) =>
+                existing.ruleCode !== acceptance.ruleCode ||
+                existing.targetKey !== acceptance.targetKey,
+            ),
+            acceptance,
+          ],
+          decisionRecords: nextRecords,
+        },
+        isDirty: true,
+      }
+    }),
+  revokeRuleAcceptance: (ruleCode, targetKey) =>
+    set((state) => {
+      const recordId = `acceptance:${ruleCode}:${targetKey}`
+      return {
+        graph: {
+          ...state.graph,
+          ruleAcceptances: (state.graph.ruleAcceptances ?? []).filter(
+            (existing) =>
+              existing.ruleCode !== ruleCode || existing.targetKey !== targetKey,
+          ),
+          // The decision stays visible as superseded rather than vanishing.
+          decisionRecords: (state.graph.decisionRecords ?? []).map((existing) =>
+            existing.id === recordId
+              ? { ...existing, status: "superseded" as const }
+              : existing,
+          ),
+        },
+        isDirty: true,
+      }
+    }),
+  upsertDecisionRecord: (record) =>
+    set((state) => {
+      const records = state.graph.decisionRecords ?? []
+      const exists = records.some((existing) => existing.id === record.id)
+      return {
+        graph: {
+          ...state.graph,
+          decisionRecords: exists
+            ? records.map((existing) => (existing.id === record.id ? record : existing))
+            : [...records, record],
+        },
+        isDirty: true,
+      }
+    }),
+  removeDecisionRecord: (id) =>
+    set((state) => ({
+      graph: {
+        ...state.graph,
+        decisionRecords: (state.graph.decisionRecords ?? []).filter(
+          (record) => record.id !== id,
+        ),
+      },
+      isDirty: true,
+    })),
+  upsertAssumption: (assumption) =>
+    set((state) => {
+      const assumptions = state.graph.assumptions ?? []
+      const exists = assumptions.some((existing) => existing.id === assumption.id)
+      return {
+        graph: {
+          ...state.graph,
+          assumptions: exists
+            ? assumptions.map((existing) =>
+                existing.id === assumption.id ? assumption : existing,
+              )
+            : [...assumptions, assumption],
+        },
+        validationIssues: [],
+        isDirty: true,
+      }
+    }),
+  removeAssumption: (id) =>
+    set((state) => ({
+      graph: {
+        ...state.graph,
+        assumptions: (state.graph.assumptions ?? []).filter(
+          (assumption) => assumption.id !== id,
+        ),
+        // Detach the removed assumption from any decision that referenced it.
+        decisionRecords: (state.graph.decisionRecords ?? []).map((record) => ({
+          ...record,
+          assumptionIds: record.assumptionIds.filter(
+            (assumptionId) => assumptionId !== id,
+          ),
+        })),
+      },
+      validationIssues: [],
+      isDirty: true,
+    })),
   updateEdgeContract: (id, dataType, dataTypeVersion) =>
     set((state) => ({
       graph: {

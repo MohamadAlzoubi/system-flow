@@ -22,6 +22,8 @@ export type SimulationProfile = {
   peakRequestsPerSecond?: number
   burstDurationSeconds?: number
   rampUpSeconds?: number
+  /** When the burst ramp begins; defaults to the start of the scenario. */
+  burstStartSeconds?: number
   payloadSizeBytes?: number
   duplicateEventPercent?: number
   malformedEventPercent?: number
@@ -108,11 +110,21 @@ export type QueueSimulationMetrics = {
 
 export type SimulationFrame = {
   timeSeconds: number
+  /** Traffic entering the flow during this frame. */
+  sourceRatePerSecond: number
+  traffic: TrafficFrameMetrics[]
   queues: QueueFrameMetrics[]
   services: ServiceFrameMetrics[]
   datastores: DataStoreFrameMetrics[]
   resilience: ResilienceFrameMetrics[]
   availability: AvailabilityFrameMetrics[]
+}
+
+export type TrafficFrameMetrics = {
+  nodeId: string
+  inputRatePerSecond: number
+  acceptedRatePerSecond: number
+  droppedRatePerSecond: number
 }
 
 export type AvailabilityFrameMetrics = {

@@ -23,12 +23,29 @@ export type {
   RuleSeverity,
 } from "./architecture-rule"
 export type {
+  Blueprint,
+  BlueprintComponent,
+  BlueprintContract,
+  BlueprintOverview,
+  BlueprintPhase,
+  BlueprintReliability,
+  BlueprintRiskGroup,
+  BlueprintTestGroup,
+} from "./blueprint"
+export type {
   ContractCompatibility,
   ContractField,
   ContractFieldType,
   ContractKind,
   DataContract,
 } from "./data-contract"
+export type {
+  ArchitectureAssumption,
+  AssumptionImpact,
+  AssumptionStatus,
+  DecisionRecord,
+  DecisionStatus,
+} from "./decision-record"
 export type {
   FailureScenario,
   FailureScenarioKind,
@@ -72,6 +89,7 @@ export type {
   SimulationRecommendation,
   SimulationResult,
   SimulationStatus,
+  TrafficFrameMetrics,
   TrafficPattern,
   UserImpactEntry,
 } from "./simulation"

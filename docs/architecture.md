@@ -57,6 +57,9 @@ The UI discovers registered nodes automatically.
   (request-response, database-operation) propagate latency to the caller;
   asynchronous interactions (async-command, published-event, stream,
   batch-transfer, realtime-push) end caller latency at the boundary.
+- The timeline propagates traffic, availability, scaling readiness, failover,
+  and queue state per frame; node metrics remain whole-scenario averages, and
+  frame values are deterministic estimates.
 
 See [simulation-roadmap.md](simulation-roadmap.md) for result semantics, UX goals, and
 the staged implementation plan.

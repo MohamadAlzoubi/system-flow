@@ -746,6 +746,187 @@ describe("runSimulation", () => {
     ).toBeUndefined()
   })
 
+  it("shows whether a short spike overflows the queue", () => {
+    const graph = structuredClone(bottleneckFlow)
+    graph.failureScenarios = []
+    graph.nodes[0].config.ratePerSecond = 5
+    graph.nodes[1].config.maxQueueSize = 500
+    graph.nodes[1].config.messageTtlMs = 600000
+    graph.simulationProfile.peakRequestsPerSecond = 1000
+    graph.simulationProfile.burstStartSeconds = 60
+    graph.simulationProfile.burstDurationSeconds = 30
+    graph.simulationProfile.rampUpSeconds = 0
+
+    const steady = runSimulation(graph, nodeRegistry)
+    expect(
+      steady.nodeMetrics.find((metric) => metric.nodeId === graph.nodes[1].id)?.queue
+        ?.overflowEvents,
+    ).toBe(0)
+
+    graph.simulationProfile.trafficPattern = "burst"
+    const bursty = runSimulation(graph, nodeRegistry)
+    const queue = bursty.nodeMetrics.find(
+      (metric) => metric.nodeId === graph.nodes[1].id,
+    )?.queue
+    expect(queue?.overflowEvents).toBeGreaterThan(0)
+    // Before the spike the queue is calm.
+    const calmFrame = bursty.timeline.find((frame) => frame.timeSeconds === 55)
+    expect(
+      calmFrame?.queues.find((entry) => entry.nodeId === graph.nodes[1].id)?.depth,
+    ).toBe(0)
+    const spikeFrame = bursty.timeline.find((frame) => frame.timeSeconds === 75)
+    expect(spikeFrame?.sourceRatePerSecond).toBe(1000)
+  })
+
+  it("grows capacity only after autoscaling readiness", () => {
+    const graph = structuredClone(productViewedFlow)
+    graph.failureScenarios = []
+    const source = graph.nodes[0]
+    const worker = graph.nodes.find((node) => node.type === "worker")
+    if (!worker) throw new Error("Fixture requires a worker")
+    source.config.ratePerSecond = 500
+    worker.config.autoscalingEnabled = true
+    worker.config.maxReplicas = 10
+    graph.nodes = [source, worker]
+    graph.edges = [
+      {
+        id: "scaled-call",
+        fromNodeId: source.id,
+        toNodeId: worker.id,
+        dataType: "ProductViewedEvent",
+        interactionType: "request-response",
+        timeoutMs: 30000,
+      },
+    ]
+
+    const result = runSimulation(graph, nodeRegistry)
+    const acceptedAt = (timeSeconds: number) =>
+      result.timeline
+        .find((frame) => frame.timeSeconds === timeSeconds)
+        ?.traffic.find((entry) => entry.nodeId === worker.id)?.acceptedRatePerSecond ?? 0
+
+    expect(acceptedAt(30)).toBeLessThan(acceptedAt(50))
+  })
+
+  it("reports the backlog an outage leaves and how it drains", () => {
+    const graph = structuredClone(bottleneckFlow)
+    graph.failureScenarios = []
+    graph.nodes[0].config.ratePerSecond = 50
+    graph.nodes[1].config.messageTtlMs = 600000
+    graph.nodes[2].config.concurrency = 20
+    graph.nodes[2].config.averageProcessingMs = 100
+
+    const scenario = {
+      id: "worker-down",
+      name: "Worker down for a minute",
+      kind: "consumer-outage" as const,
+      affectedNodeIds: [graph.nodes[2].id],
+      affectedBoundaryIds: [],
+      startSeconds: 60,
+      durationSeconds: 60,
+      recoverySeconds: 0,
+    }
+    const result = runSimulation(graph, nodeRegistry, scenario)
+    const depthAt = (timeSeconds: number) =>
+      result.timeline
+        .find((frame) => frame.timeSeconds === timeSeconds)
+        ?.queues.find((entry) => entry.nodeId === graph.nodes[1].id)?.depth ?? 0
+
+    expect(depthAt(120)).toBeGreaterThan(2000)
+    expect(depthAt(300)).toBeLessThan(100)
+  })
+
+  it("propagates synchronous timeout outcomes upstream", () => {
+    const graph = structuredClone(productViewedFlow)
+    graph.failureScenarios = []
+    const source = graph.nodes[0]
+    const endpoint = graph.nodes[1]
+    endpoint.availabilityPolicy = {
+      mode: "scheduled",
+      offlineFromSeconds: 60,
+      offlineDurationSeconds: 60,
+      recoverySeconds: 0,
+      degradedCapacityPercent: 100,
+    }
+    graph.nodes = [source, endpoint]
+    graph.edges = [
+      {
+        id: "timed-call",
+        fromNodeId: source.id,
+        toNodeId: endpoint.id,
+        dataType: "ProductViewedEvent",
+        interactionType: "request-response",
+        timeoutMs: 5000,
+        responseDataType: "ProductViewedEventAck",
+      },
+    ]
+
+    const result = runSimulation(graph, nodeRegistry)
+    const timedOut = result.userImpact.find((entry) => entry.outcome === "timed-out")
+    expect(timedOut?.events).toBeGreaterThan(0)
+    expect(result.userImpact.find((entry) => entry.outcome === "lost")).toBeUndefined()
+  })
+
+  it("activates failover after a detection delay", () => {
+    const graph = structuredClone(bottleneckFlow)
+    graph.failureScenarios = []
+    const source = graph.nodes[0]
+    const primary = graph.nodes[2]
+    const secondary = structuredClone(primary)
+    secondary.id = "standby-worker"
+    primary.availabilityPolicy = {
+      mode: "scheduled",
+      offlineFromSeconds: 60,
+      offlineDurationSeconds: 120,
+      recoverySeconds: 0,
+      degradedCapacityPercent: 100,
+    }
+    source.routingPolicy = { mode: "failover" }
+    graph.nodes = [source, primary, secondary]
+    graph.edges = [
+      {
+        id: "primary-path",
+        fromNodeId: source.id,
+        toNodeId: primary.id,
+        dataType: "QueueJob",
+        interactionType: "request-response",
+        timeoutMs: 5000,
+        priority: 0,
+      },
+      {
+        id: "standby-path",
+        fromNodeId: source.id,
+        toNodeId: secondary.id,
+        dataType: "QueueJob",
+        interactionType: "request-response",
+        timeoutMs: 5000,
+        priority: 1,
+      },
+    ]
+
+    const result = runSimulation(graph, nodeRegistry)
+    const standbyInputAt = (timeSeconds: number) =>
+      result.timeline
+        .find((frame) => frame.timeSeconds === timeSeconds)
+        ?.traffic.find((entry) => entry.nodeId === secondary.id)?.inputRatePerSecond ?? 0
+
+    expect(standbyInputAt(55)).toBe(0)
+    // The outage starts at 60; detection lags one frame behind.
+    expect(standbyInputAt(60)).toBe(0)
+    expect(standbyInputAt(70)).toBeGreaterThan(0)
+    expect(standbyInputAt(250)).toBe(0)
+    expect(
+      result.userImpact.find((entry) => entry.outcome === "served-by-fallback")?.events,
+    ).toBeGreaterThan(0)
+  })
+
+  it("stays reproducible with random traffic", () => {
+    const graph = structuredClone(productViewedFlow)
+    graph.simulationProfile.trafficPattern = "random"
+
+    expect(runSimulation(graph, nodeRegistry)).toEqual(runSimulation(graph, nodeRegistry))
+  })
+
   it("compares results against declared architecture goals", () => {
     const result = runSimulation(productViewedFlow, nodeRegistry)
 

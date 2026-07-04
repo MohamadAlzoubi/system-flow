@@ -16,6 +16,7 @@ const schema = z.object({
   peakRequestsPerSecond: z.number().nonnegative().optional(),
   burstDurationSeconds: z.number().nonnegative().optional(),
   rampUpSeconds: z.number().nonnegative().optional(),
+  burstStartSeconds: z.number().nonnegative().optional(),
   payloadSizeBytes: z.number().positive().optional(),
   duplicateEventPercent: z.number().min(0).max(100).optional(),
   malformedEventPercent: z.number().min(0).max(100).optional(),
@@ -131,6 +132,16 @@ export function SimulationProfileForm({ profile, onSave }: Props) {
           id="profile-ramp"
           type="number"
           {...register("rampUpSeconds", { valueAsNumber: true })}
+        />
+      </label>
+      <label htmlFor="profile-burst-start">
+        Burst start (seconds, optional)
+        <Input
+          id="profile-burst-start"
+          type="number"
+          {...register("burstStartSeconds", {
+            setValueAs: (value) => (value === "" ? undefined : Number(value)),
+          })}
         />
       </label>
       <label htmlFor="profile-payload">

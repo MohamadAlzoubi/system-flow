@@ -32,11 +32,7 @@ export function messagingRules(context: RuleContext): ArchitectureRule[] {
       })
     }
     const ttlSeconds = (Number(node.config.messageTtlMs) || 0) / 1000
-    if (
-      ttlSeconds > 0 &&
-      longestOutageSeconds > 0 &&
-      ttlSeconds < longestOutageSeconds
-    ) {
+    if (ttlSeconds > 0 && longestOutageSeconds > 0 && ttlSeconds < longestOutageSeconds) {
       findings.push({
         code: "TTL_SHORTER_THAN_OUTAGE",
         category: "reliability",

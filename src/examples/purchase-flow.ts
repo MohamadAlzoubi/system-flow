@@ -83,3 +83,43 @@ purchaseFlow.failureScenarios = [
     recoveryBehavior: "Queued orders drain after the provider recovers.",
   },
 ]
+
+purchaseFlow.assumptions = [
+  {
+    id: "purchase-psp-idempotency",
+    statement: "The payment provider honors idempotency keys on retried charges.",
+    status: "unverified",
+    impact: "high",
+    relatedIds: [purchaseFlow.nodes[6].id],
+  },
+  {
+    id: "purchase-peak-traffic",
+    statement: "Peak checkout traffic stays below 2,000 requests per second.",
+    status: "unverified",
+    impact: "medium",
+    relatedIds: [],
+  },
+]
+
+purchaseFlow.decisionRecords = [
+  {
+    id: "purchase-queue-before-psp",
+    title: "Queue orders before calling the payment provider",
+    status: "accepted",
+    context:
+      "The payment provider has occasional outages and rate limits during peak sales.",
+    decision:
+      "Accept orders into a durable queue and call the provider from a worker with bounded retries.",
+    alternatives: [
+      "Call the provider synchronously from the request path.",
+      "Drop orders the provider cannot accept immediately.",
+    ],
+    consequences: [
+      "Order confirmation becomes asynchronous.",
+      "The queue must be sized for the longest expected provider outage.",
+    ],
+    assumptionIds: ["purchase-psp-idempotency"],
+    relatedNodeIds: [purchaseFlow.nodes[4].id, purchaseFlow.nodes[6].id],
+    relatedEdgeIds: [],
+  },
+]

@@ -153,6 +153,9 @@ export function AnalysisPanel() {
   const captureBaseline = useFlowEditorStore((state) => state.captureSimulationBaseline)
   const clearBaseline = useFlowEditorStore((state) => state.clearSimulationBaseline)
   const setAnalysisOpen = useFlowEditorStore((state) => state.setAnalysisOpen)
+  const highImpactAssumptions = (graph.assumptions ?? []).filter(
+    (assumption) => assumption.impact === "high" && assumption.status === "unverified",
+  )
   const [playing, setPlaying] = useState(false)
   const duration = result?.timeline.at(-1)?.timeSeconds ?? 0
   const queueAgeSeries =
@@ -164,6 +167,12 @@ export function AnalysisPanel() {
       })),
     ) ?? []
   const maximumQueueAge = Math.max(1, ...queueAgeSeries.map((point) => point.age))
+  const trafficSeries =
+    result?.timeline.map((frame) => ({
+      time: frame.timeSeconds,
+      rate: frame.sourceRatePerSecond,
+    })) ?? []
+  const maximumTrafficRate = Math.max(1, ...trafficSeries.map((point) => point.rate))
 
   useEffect(() => {
     if (!playing || !result) return
@@ -253,6 +262,14 @@ export function AnalysisPanel() {
             {result.userImpact.length > 0 && (
               <UserImpactSection entries={result.userImpact} />
             )}
+            {highImpactAssumptions.length > 0 && (
+              <div className="assumption-alert">
+                <strong>Unverified high-impact assumptions</strong>
+                {highImpactAssumptions.map((assumption) => (
+                  <span key={assumption.id}>{assumption.statement}</span>
+                ))}
+              </div>
+            )}
             {result.timeline.some((frame) => frame.queues.length > 0) && (
               <div className="timeline-controls">
                 <button type="button" onClick={() => setPlaying((value) => !value)}>
@@ -309,6 +326,25 @@ export function AnalysisPanel() {
               </span>
               <span>{result.explanation.confidenceReasons[0]}</span>
             </div>
+            {trafficSeries.length > 1 && maximumTrafficRate > 1 && (
+              <div
+                className="message-age-chart traffic-chart"
+                role="img"
+                aria-label="Incoming traffic over time"
+              >
+                <strong>Traffic over time</strong>
+                <div>
+                  {trafficSeries.map((point) => (
+                    <i
+                      key={point.time}
+                      title={`${point.time}s: ${Math.round(point.rate).toLocaleString()}/s`}
+                      style={{ height: `${(point.rate / maximumTrafficRate) * 100}%` }}
+                    />
+                  ))}
+                </div>
+                <small>{Math.round(maximumTrafficRate).toLocaleString()}/s peak</small>
+              </div>
+            )}
             {queueAgeSeries.length > 0 && (
               <div
                 className="message-age-chart"
