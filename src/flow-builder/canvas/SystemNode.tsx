@@ -1,31 +1,4 @@
 import { Handle, type NodeProps, Position } from "@xyflow/react"
-import {
-  Activity,
-  ArchiveX,
-  Boxes,
-  Braces,
-  Clock3,
-  Cloud,
-  Copy,
-  Cpu,
-  Database,
-  Gauge,
-  GitBranch,
-  Globe2,
-  HardDrive,
-  Inbox,
-  Layers3,
-  type LucideIcon,
-  Network,
-  PackageOpen,
-  Radio,
-  RadioTower,
-  Scaling,
-  Search,
-  ServerCog,
-  Shield,
-  Waves,
-} from "lucide-react"
 import type {
   AvailabilityFrameMetrics,
   DataStoreFrameMetrics,
@@ -36,39 +9,12 @@ import type {
   TrafficFrameMetrics,
 } from "../../contracts"
 import { nodeRegistry } from "../../node-registry"
-
-const icons: Record<string, LucideIcon> = {
-  "event.source": Radio,
-  "http.endpoint": Globe2,
-  "function.service": Braces,
-  "router.condition": GitBranch,
-  "redis.cache": Database,
-  "rabbitmq.queue": Inbox,
-  worker: Cpu,
-  database: HardDrive,
-  "websocket.gateway": RadioTower,
-  "external.api": Cloud,
-  "scheduler.cron": Clock3,
-  "logger.metrics": Activity,
-  "network.load-balancer": Network,
-  "resilience.rate-limiter": Gauge,
-  "resilience.circuit-breaker": Shield,
-  "stream.kafka-topic": Layers3,
-  "storage.object": PackageOpen,
-  "network.cdn": Network,
-  "data.search-engine": Search,
-  "compute.batch-processor": Boxes,
-  "data.database-proxy": ServerCog,
-  "data.read-replica": Copy,
-  "messaging.dead-letter-queue": ArchiveX,
-  "stream.processor": Waves,
-  "control.autoscaler": Scaling,
-}
+import { fallbackNodeIcon, nodeTypeIcons } from "../node-icons"
 
 export function SystemNode({ data, selected }: NodeProps) {
   const nodeType = String(data.nodeType)
   const definition = nodeRegistry.get(nodeType)
-  const Icon = icons[nodeType] ?? Braces
+  const Icon = nodeTypeIcons[nodeType] ?? fallbackNodeIcon
   const colorClass = `node-${nodeType.replaceAll(".", "-")}`
   const metrics = data.metrics as NodeSimulationMetrics | undefined
   const queueFrame = data.queueFrame as QueueFrameMetrics | undefined

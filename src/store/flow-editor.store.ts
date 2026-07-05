@@ -148,6 +148,26 @@ const savedGraphSchema = z
   })
   .passthrough()
 
+// Click-to-add walks a grid until it finds a spot no existing node occupies,
+// so repeated clicks never stack nodes on top of each other.
+function nextFreePosition(nodes: NodeInstance[]): NodeInstance["position"] {
+  const origin = { x: 280, y: 160 }
+  const step = 56
+  for (let cell = 0; cell < 60; cell += 1) {
+    const candidate = {
+      x: origin.x + (cell % 5) * step * 2,
+      y: origin.y + Math.floor(cell / 5) * step,
+    }
+    const occupied = nodes.some(
+      (node) =>
+        Math.abs(node.position.x - candidate.x) < step &&
+        Math.abs(node.position.y - candidate.y) < step,
+    )
+    if (!occupied) return candidate
+  }
+  return origin
+}
+
 function loadSavedGraph(): FlowGraph {
   if (typeof window === "undefined") return productViewedFlow
   try {
@@ -595,7 +615,7 @@ export const useFlowEditorStore = create<FlowEditorState>((set) => ({
             {
               id,
               type,
-              position: position ?? { x: 280, y: 160 },
+              position: position ?? nextFreePosition(state.graph.nodes),
               config: { ...definition.defaultConfig },
             },
           ],

@@ -1093,7 +1093,820 @@ exactly 84 ms.” Save baselines and make one meaningful change at a time.
 
 ---
 
-## 18. Glossary
+## 18. System design concepts
+
+Everything above teaches the editor. This part teaches the engineering behind it —
+the concepts interviewers ask about and production systems live or die by. Each
+topic follows the same shape: what it is, why it exists, when to use it, when not
+to, what goes wrong in production, and how to explore it in the editor.
+
+Read it in order the first time; afterwards, jump straight to what you need.
+
+---
+
+## 19. APIs and communication styles
+
+### What an API really is
+
+An API is a **contract**: an agreed shape of request and response between two
+programs. The contract — not the code behind it — is what callers depend on. That
+is why System Flow treats data contracts as the primary object: change a contract
+carelessly and every consumer breaks at once.
+
+### Synchronous vs. asynchronous
+
+The most important architectural decision on any edge:
+
+| | Synchronous (request/response) | Asynchronous (queue/event) |
+|---|---|---|
+| Caller waits? | Yes — its latency includes yours | No — hands off and moves on |
+| Failure coupling | Your outage is their outage | Buffered; consumer can be down briefly |
+| Consistency | Immediate answer | Eventual — reply arrives later or never |
+| Use for | Reads, anything a user is waiting on | Emails, exports, side effects, fan-out |
+
+Rule of thumb: **if the user needs the answer to continue, stay synchronous. If
+they only need confirmation that work was accepted, go asynchronous.** A checkout
+must synchronously reserve payment, but the receipt email belongs on a queue.
+
+### REST, RPC, and when it matters
+
+- **REST** models resources (`GET /orders/42`). Predictable, cacheable, ideal for
+  public APIs.
+- **RPC (e.g. gRPC)** models actions (`ChargePayment()`). Compact and fast,
+  ideal for internal service-to-service calls.
+- The choice matters far less than the sync/async decision above. Interviewers
+  care whether you know *why* you chose, not which acronym you chose.
+
+### WebSockets vs. polling
+
+Polling asks "anything new?" repeatedly; WebSockets hold one connection open and
+push. Polling is simpler and stateless; WebSockets scale to instant updates but
+make servers stateful — every open connection consumes memory and must survive
+deploys and failovers. Start with polling; move to WebSockets when update
+frequency or connection count makes polling wasteful.
+
+### Reverse proxies vs. load balancers
+
+Both sit in front of your servers; the difference is intent. A **load balancer**
+spreads traffic across identical replicas. A **reverse proxy** is the general
+tool: TLS termination, compression, routing by path, caching, hiding internal
+topology. In practice one component (nginx, Envoy, an ALB) often plays both roles.
+
+**Common production mistakes**
+
+- No timeout on a synchronous call — one slow dependency freezes every thread.
+- Treating POST retries as safe — duplicate orders appear under load.
+- Polling every second from a million clients when a 30-second cadence would do.
+
+**Interview questions to be ready for**
+
+- "When would you *not* use a message queue between two services?"
+- "How do you version an API without breaking existing clients?"
+- "What happens to in-flight WebSocket connections during a deploy?"
+
+**Try it:** connect an HTTP Endpoint to a slow External API, set the edge
+interaction to request-response, and watch caller latency inherit the provider's
+latency. Then decouple them with a RabbitMQ Queue and compare.
+
+---
+
+## 20. Caching
+
+### Why caching exists
+
+Most systems read the same data far more often than they change it. A cache
+stores answers close to the asker so repeated questions never reach the expensive
+source. It is the highest-leverage performance tool in backend engineering — and
+the source of the industry's favorite joke about the two hard problems: naming
+things, cache invalidation, and off-by-one errors.
+
+### Where caches live
+
+| Layer | Example | Typical latency |
+|---|---|---|
+| Browser / client | HTTP cache headers | 0 ms (local) |
+| CDN edge | CloudFront, Fastly | 5–30 ms |
+| Application cache | Redis, Memcached | 0.5–5 ms |
+| Database internal | Buffer pool, query cache | already counted in query time |
+
+### The strategies that matter
+
+- **Cache-aside (lazy)** — app checks cache, on miss reads the database and
+  fills the cache. The default; simple, but the first request after expiry is slow.
+- **Write-through** — writes go to cache and database together. Reads are always
+  warm; writes pay double cost.
+- **Write-behind** — write to cache now, flush to the database later. Fast and
+  dangerous: a crash loses the unflushed writes.
+- **TTL (time-to-live)** — every entry expires. Short TTL = fresher data, lower
+  hit rate. Long TTL = better hit rate, staler data. There is no free lunch.
+
+### The failure everyone hits: cache stampede
+
+A popular key expires; ten thousand concurrent requests all miss and all hit the
+database at once. Mitigations: staggered (jittered) TTLs, request coalescing
+(only one request refills, the rest wait), or refreshing hot keys ahead of expiry.
+
+### Redis specifics worth knowing
+
+Redis is single-threaded per shard — one slow command (like `KEYS *`) blocks
+everything. Eviction policy decides behavior at the memory limit: `allkeys-lru`
+quietly drops cold data (right for caches); `noeviction` fails writes (right for
+data you cannot lose — which means it should probably not be in Redis).
+
+**When not to cache:** data read once, data where staleness is unacceptable
+(account balances at the moment of withdrawal), or as a bandage over a missing
+database index — fix the index first.
+
+**Common production mistakes**
+
+- Caching without measuring the hit rate. Below ~50%, the cache adds complexity
+  and little else.
+- Forgetting to invalidate on write, then debugging "phantom" stale reads.
+- Sizing the cache by guess: hit rate climbs with memory only until the working
+  set fits, then flattens.
+
+**Interview questions to be ready for**
+
+- "How would you keep the cache consistent with the database?"
+- "What is a cache stampede and how do you prevent one?"
+- "Cache-aside vs. write-through — when does each win?"
+
+**Try it:** [Lab B](#16-guided-learning-labs) drops the Redis Cache hit rate
+from 75% to 0% and shows what a cold cache does to the database behind it.
+
+---
+
+## 21. Databases: indexes, replication, and sharding
+
+### Indexes — the first performance tool
+
+An index is a sorted lookup structure the database maintains next to your table.
+Without one, a query scans every row (O(n)); with one, it seeks (O(log n)). The
+difference at a million rows is a full second versus a millisecond — the single
+most common cause of "the site got slow as we grew" is a missing index.
+
+The cost: every write must also update every index. Index the columns you filter
+and join on; do not index everything.
+
+### Transactions and contention
+
+A transaction groups statements so they commit or fail together, holding locks
+while it runs. Long transactions on hot rows serialize your throughput: if every
+order update locks the same inventory row for 15 ms, you cannot exceed ~66
+updates/second on that row no matter how many servers you add. Keep transactions
+short; never call external APIs inside one.
+
+### Replication — copies for reads and survival
+
+One **primary** takes writes; **replicas** copy its change log and serve reads.
+Two motivations: read scaling and failover.
+
+The catch is **replication lag**. A user updates their profile (write to
+primary), the next page reads a replica that has not caught up, and their change
+"disappears." Fixes: read your own writes from the primary for a few seconds, or
+route session-critical reads to the primary permanently.
+
+Failover is not free either: promoting a replica takes seconds during which
+writes fail — design the caller side (retries, queues) for that window.
+
+### Sharding — the last resort that scales writes
+
+Replication scales reads; **sharding** scales writes by splitting data across
+independent databases: users A–M here, N–Z there (or, better, by hash of user id).
+
+- Choose a shard key with even spread and one that appears in most queries.
+  A bad key creates a **hot shard** that melts while the others idle.
+- Cross-shard queries and transactions become application problems. That is the
+  price; pay it only when a single primary genuinely cannot keep up.
+- Shard too early and you carry the operational cost for years before needing it.
+
+### SQL vs. NoSQL in one honest paragraph
+
+Relational databases give you joins, constraints, and transactions — use them by
+default. Document stores (MongoDB) trade schema rigidity for flexibility. Wide-
+column stores (Cassandra) trade query flexibility for massive write throughput.
+Key-value stores (DynamoDB) trade almost everything for predictable latency at
+any scale. Choosing NoSQL because it is "webscale" — rather than because a
+specific access pattern demands it — is a classic résumé-driven mistake.
+
+**Common production mistakes**
+
+- The N+1 query: fetching a list, then one query per item. ORMs make this easy
+  to write and easy to miss until the list grows.
+- Connection pool math: 50 replicas × 20 connections = 1,000 connections against
+  a database that allows 300.
+- Adding read replicas to fix a write bottleneck (they only help reads).
+
+**Interview questions to be ready for**
+
+- "How do you choose a shard key, and what happens with a bad one?"
+- "A user complains their update vanished. Walk me through replication lag."
+- "When does an index hurt you?"
+
+**Try it:** on a Database node, uncheck **Index used** and watch query time in
+the simulation. Then add a Read Replica node and see reads move off the primary.
+
+---
+
+## 22. Consistency, CAP, and distributed coordination
+
+### The CAP theorem, minus the mythology
+
+When a network partition splits your nodes (and eventually it will), you must
+choose: refuse requests to stay **consistent** (CP), or keep answering with
+possibly stale data to stay **available** (AP). That is the entire theorem —
+"pick 2 of 3" is misleading because partition tolerance is not optional in a
+distributed system.
+
+The real-world reading: banks pick CP for balances (better to error than to be
+wrong); social feeds pick AP (better slightly stale than down). Most systems mix
+both, per feature.
+
+### Eventual consistency
+
+An AP system promises that if writes stop, all replicas *eventually* agree.
+"Eventually" is usually milliseconds — but your design must tolerate the window:
+a like count that differs briefly between two users is fine; two users buying
+the last concert ticket is not. Ask of every piece of data: **what breaks if
+this read is three seconds old?** The answer sorts your data into strict and
+relaxed piles, and the relaxed pile is where scale comes from.
+
+### Idempotency — the retry-safety property
+
+An operation is idempotent when doing it twice equals doing it once. Retries,
+queue redeliveries, and duplicate clicks are facts of distributed life, so any
+handler that charges, creates, or sends must be idempotent. The standard trick:
+client sends a unique key (`idempotency-key: abc123`); server records completed
+keys and returns the stored result for duplicates. Stripe's API works this way.
+
+### Distributed locks — coordination of last resort
+
+Sometimes exactly one worker may act (issue invoice #1000, run the nightly
+settlement). A distributed lock (Redis `SET NX` with expiry, or ZooKeeper/etcd)
+grants exclusive access. The subtleties are brutal: locks must expire (holders
+crash), but expiry means a slow holder may act *after* losing the lock — so
+pair locks with fencing tokens, or better, redesign so uniqueness is enforced by
+the database (unique constraint) or the queue (single consumer per partition).
+
+**Common production mistakes**
+
+- Assuming exactly-once delivery exists. Queues promise at-least-once; your
+  handler's idempotency turns it into effectively-once.
+- Testing only with everything healthy — partitions and lag appear only in chaos.
+- Global locks around hot paths, quietly serializing a "distributed" system.
+
+**Interview questions to be ready for**
+
+- "Explain CAP with a concrete example of a CP choice and an AP choice."
+- "How would you prevent double-charging when clients retry payments?"
+- "Design a distributed lock. Now tell me why it is still not safe."
+
+**Try it:** set a Database node's **Failover time** to 30 s, take the primary
+offline with an availability policy, and watch what callers experience during
+promotion — that window is CAP made visible.
+
+---
+
+## 23. Messaging, queues, and event-driven architecture
+
+### Why queues exist
+
+A queue turns "you must handle this now" into "handle this when you can." That
+buys you: survival of consumer outages (messages wait), smoothing of traffic
+spikes (the queue absorbs the burst), and independent scaling of producers and
+consumers. The price: eventual consistency and a new component to operate.
+
+### Queues vs. event streams
+
+| | Queue (RabbitMQ, SQS) | Stream / log (Kafka) |
+|---|---|---|
+| Message after consumption | Deleted | Retained; consumers keep their own offset |
+| Consumers | Compete for each message | Each group reads the full stream independently |
+| Replay history | No | Yes — rewind and reprocess |
+| Best for | Work distribution (jobs, tasks) | Event broadcast, pipelines, audit, analytics |
+
+Shortcut: **"do this work once" → queue. "This happened; anyone may care" →
+stream.**
+
+### Ordering, partitions, and the parallelism trade
+
+Global ordering and parallelism are enemies. Kafka's compromise: order is
+guaranteed only *within* a partition, so key related events together (all events
+for order #42 share a partition) and scale across partitions. Consumers in a
+group split partitions between them — which means partitions, not consumers, cap
+your parallelism.
+
+### Dead-letter queues
+
+After N failed attempts, a message moves to a DLQ instead of blocking the queue
+or being dropped. A DLQ is a safety net **plus an obligation**: monitor it, alert
+on growth, diagnose entries, and replay them after the fix — slowly, because the
+original failure may still be fragile. An unmonitored DLQ is just a place data
+goes to die quietly.
+
+### Event-driven architecture, honestly
+
+Publishing events ("OrderPlaced") instead of calling services directly decouples
+teams beautifully: the fraud checker, the email sender, and the analytics
+pipeline subscribe without the order service knowing they exist. The costs are
+real too: no single place shows the flow end-to-end, debugging requires
+correlation IDs and tracing, and "eventual" sometimes means "not yet, and you
+don't know why." The **outbox pattern** solves the classic dual-write bug —
+write the event into the database in the same transaction as the data, and let a
+relay publish it — so you never commit the order but lose the event.
+
+**Common production mistakes**
+
+- Queue depth growing forever because consumers are permanently slower than
+  producers — a queue buffers bursts, it does not create capacity.
+- Retrying poison messages endlessly with no DLQ, blocking everything behind them.
+- Fan-out amplification: one event triggers five consumers that each publish
+  more events, and a single user click becomes 200 messages.
+
+**Interview questions to be ready for**
+
+- "Kafka vs. RabbitMQ — how do you choose?"
+- "How do you preserve order for one customer while processing customers in
+  parallel?"
+- "What is the outbox pattern and what bug does it fix?"
+
+**Try it:** [Lab C](#16-guided-learning-labs) takes a Worker offline and shows
+the queue absorbing messages, then draining after recovery. [Lab D](#16-guided-learning-labs)
+shows a retry storm amplifying load against a failing dependency.
+
+---
+
+## 24. Authentication, sessions, and JWT
+
+### Authentication vs. authorization
+
+**Authentication (authn)**: who are you? **Authorization (authz)**: what may you
+do? Login is authentication; "only admins can delete" is authorization. Keep
+them separate in your head and your code — most access-control bugs come from
+blurring them, usually as authenticated-but-unauthorized access (user A reading
+user B's documents by changing an ID in the URL).
+
+### Sessions — the stateful classic
+
+On login the server stores a session record and gives the browser an opaque
+cookie. Every request looks up the session.
+
+- **Instant revocation**: delete the record, the user is out.
+- **Cost**: every request pays a session-store lookup, and that store (usually
+  Redis) must scale with your traffic and survive failures.
+
+### JWT — the stateless alternative
+
+A JWT carries the user's claims *in the token itself*, signed by the server. Any
+service can verify the signature locally — no lookup, no shared session store.
+That is why microservices like JWTs.
+
+The trade: **a JWT cannot be revoked before it expires** without reintroducing
+the very state you removed (a blocklist). Standard compromise: short-lived
+access tokens (minutes) plus a long-lived refresh token that *is* checked
+against the database — instant-ish revocation, cheap verification on the hot
+path.
+
+Practical rules: never put secrets in the payload (it is readable by anyone,
+only *tamper-proof*), always validate expiry and algorithm server-side, and
+store tokens where XSS cannot easily reach them.
+
+### Where auth lives in an architecture
+
+Terminate authentication once at the edge (API gateway or auth middleware), pass
+verified identity inward. Internal services trust the gateway's assertion —
+which is also why the gateway must be the *only* way in.
+
+**Common production mistakes**
+
+- 24-hour JWTs with no refresh flow: a stolen token works for a day and support
+  cannot kill it.
+- Sessions in local server memory behind a load balancer without sticky
+  sessions: users log out at random as requests move between replicas.
+- Authorization checks in the UI only — the API happily serves anyone who skips
+  the frontend.
+
+**Interview questions to be ready for**
+
+- "Sessions vs. JWT — walk me through when each wins."
+- "How do you log a user out everywhere, instantly, with JWTs?"
+- "Where do you enforce authorization in a microservices system?"
+
+**Try it:** toggle **Requires auth** off on a public POST HTTP Endpoint and run
+the architecture Review — the security rules flag it.
+
+---
+
+## 25. Resilience patterns
+
+The resilience toolkit is one idea in five shapes: **assume dependencies fail,
+and fail small instead of failing everywhere.**
+
+### Timeouts — the foundation
+
+Every remote call needs a deadline. Without one, a hung dependency collects your
+threads until nothing else can run. Set timeouts above the dependency's p99 (not
+its average), and remember timeout ≠ failure handled — you still need a fallback.
+
+### Retries — helpful, then catastrophic
+
+Retries fix transient blips and amplify real outages: 3 retries = up to 4× load
+on a dependency that is *already drowning*. The civilized retry: limited
+attempts, **exponential backoff** (wait 1 s, 2 s, 4 s…), **jitter** (randomize
+waits so a thousand clients do not synchronize into waves), and only for
+idempotent operations.
+
+### Circuit breakers — stop calling the sick
+
+Track the failure rate; past a threshold, **open** the circuit and fail fast
+without calling. After a cool-down, let a few probes through (**half-open**);
+success closes the circuit. This protects both sides: callers stop wasting
+time on doomed calls, and the struggling dependency gets room to recover.
+
+### Bulkheads — contain the blast
+
+Cap concurrent calls per dependency (separate pools/semaphores), named after
+ship compartments. If the recommendation service hangs, it exhausts *its* 20
+slots — not every thread in the process. Checkout survives.
+
+### Rate limiting and load shedding — the front door
+
+Rate limiting rejects excess *per client* (fairness, abuse, protecting a quota);
+load shedding rejects excess *in total* when you are near collapse. A fast,
+clear 429 is kinder than a 30-second timeout: serving 80% of users well beats
+serving 100% terribly. Token bucket allows honest bursts; sliding window smooths
+edges — the strategy matters less than having one at all.
+
+### Graceful degradation — the goal of all of it
+
+Decide *in advance* what turns off first. Netflix without personalized rows
+falls back to generic ones; a product page without reviews still sells. The
+pattern: identify the critical path (browse → cart → pay), guard everything
+off-path with fallbacks, and make sure degradation is visible in metrics so it
+never becomes the silent permanent state.
+
+**Common production mistakes**
+
+- Retry storms: retries at three layers (client, gateway, service) multiply into
+  dozens of attempts per user action.
+- Timeouts longer downstream than upstream — the caller gives up before the
+  callee, wasting all completed work.
+- A circuit breaker with no fallback: failing fast is still failing, just faster.
+
+**Interview questions to be ready for**
+
+- "Walk through what happens when a downstream service becomes slow — layer by
+  layer."
+- "Why do retries need jitter?"
+- "Circuit breaker vs. bulkhead vs. rate limiter — which problem does each solve?"
+
+**Try it:** [Lab D](#16-guided-learning-labs) builds a retry storm against a
+failing External API; raise the Circuit Breaker's observed failures past its
+threshold to watch it trip and shed the load.
+
+---
+
+## 26. Scaling: monoliths, microservices, and horizontal growth
+
+### Vertical vs. horizontal
+
+**Vertical** scaling buys a bigger machine: zero code changes, but a hard
+ceiling and a single point of failure. **Horizontal** scaling adds machines:
+near-limitless, but demands that your services be **stateless** — any replica
+can serve any request because state lives outside (database, Redis, object
+storage). Statelessness is the entry fee for everything else in this section;
+sticky sessions and local file uploads are how you fail to pay it.
+
+### Autoscaling and its physics
+
+Autoscaling reacts to load with a delay: detect (metrics lag ~1 min) + decide +
+boot (cold start). During that gap, existing capacity eats the spike — which is
+why the target is ~70% utilization, not 95%, and why predictable spikes
+(9 a.m. login, Black Friday) deserve pre-warmed capacity instead of faith in
+reaction time. Set max replicas: your database has a connection ceiling, and
+"autoscale until the database dies" is a real incident pattern.
+
+### Monolith vs. microservices — the honest ledger
+
+| | Monolith | Microservices |
+|---|---|---|
+| Deploy | One unit — simple, but all-or-nothing | Independent per service |
+| Data | One database, real transactions | Per-service databases, eventual consistency |
+| Failure | Process dies → everything dies | Isolated — if you did the resilience work |
+| Debugging | Stack trace | Distributed tracing across services |
+| Team fit | One team, shared codebase | Many teams, clear ownership boundaries |
+| Ops cost | Low | High: gateways, discovery, tracing, CI × N |
+
+The uncomfortable truth: microservices are primarily an **organizational**
+technology. They let fifty teams deploy independently; they do not make a
+five-person startup faster — they usually make it slower. The default path:
+start with a **modular monolith** (clean internal boundaries, one deploy), and
+extract a service only when a specific pressure demands it — a component
+needing independent scale, a team blocked on deploys, a bounded context with
+different availability needs. Bad boundaries are far more expensive than late
+boundaries: a "distributed monolith" (microservices that must deploy together)
+combines the costs of both worlds with the benefits of neither.
+
+**Common production mistakes**
+
+- Splitting into services along technical layers (API-service, DB-service)
+  instead of business capabilities (orders, payments, inventory).
+- Two services sharing one database table — you now have a distributed monolith.
+- Scaling stateless app servers while the shared database stays fixed: the
+  bottleneck just moves and gains company.
+
+**Interview questions to be ready for**
+
+- "When would you advise a startup to use microservices from day one?" (Almost
+  never — know why.)
+- "What breaks when you make a stateful service horizontally scalable?"
+- "How do you split a monolith? Where do you cut first?"
+
+**Try it:** [Lab F](#16-guided-learning-labs) demonstrates scale-up delay — the
+queue that builds while autoscaling boots is the physics above, on screen.
+
+---
+
+## 27. CDNs, object storage, and the edge
+
+### Object storage — files as a service
+
+Databases store records; **object storage** (S3, GCS, R2) stores files: each
+object gets a key, replication across zones gives ~eleven nines of durability,
+and capacity is effectively infinite. It is the default home for uploads,
+images, video, backups, logs, and static builds. The trade: latency is tens of
+milliseconds and there are no partial updates — you replace objects whole.
+
+The pattern that matters: **presigned URLs**. Instead of streaming uploads
+through your API (paying its bandwidth and memory twice), the API hands the
+client a short-lived signed URL and the client talks to storage directly. Your
+API stays in control of *authorization* without touching the *bytes*.
+
+### CDN — cache at the edge of the world
+
+A CDN keeps copies of content in hundreds of locations near users. Physics is
+the reason: São Paulo to Frankfurt is ~200 ms round-trip no matter how fast your
+servers are; São Paulo to a São Paulo edge node is ~10 ms. Effects: latency
+drops worldwide, your origin sheds most of its traffic, and traffic spikes hit
+the CDN's capacity instead of yours.
+
+Static assets (images, JS, video) are the easy win — cache-hit rates above 90%.
+The subtle art is **invalidation**: fingerprinted filenames (`app.3f9a2c.js`)
+for assets, so deploys are instant and cache-safe; short TTLs or explicit purge
+for HTML and APIs.
+
+### The standard media pipeline
+
+Upload via presigned URL → object storage event triggers a Worker → Worker
+generates thumbnails/transcodes → results land back in storage → users download
+via CDN. Every piece is a node type in this editor; it is worth building once to
+see how little your API servers actually touch.
+
+**Common production mistakes**
+
+- Serving user uploads from application servers' local disks — files vanish
+  behind the load balancer and on every redeploy.
+- Caching personalized or authenticated responses at the edge (the classic
+  "user A sees user B's account" incident).
+- Forgetting that a CDN protects *reads* only — your write path still hits
+  origin at full force.
+
+**Interview questions to be ready for**
+
+- "Design an image-upload flow for a mobile app." (Presigned URLs are the
+  expected answer.)
+- "How do you deploy new JS without users receiving stale bundles?"
+- "What belongs in object storage vs. the database?"
+
+**Try it:** put a CDN node in front of an Object Storage node, set cache hit
+rate to 90%, and compare origin traffic with and without the CDN under load.
+
+---
+
+## 28. Observability: logging, metrics, and tracing
+
+### The three pillars, and what each answers
+
+- **Logs** — "what happened here?" A structured record of one event
+  (`{"level":"error","route":"/pay","order":42,...}`). Searchable JSON beats
+  prose; log *events*, not narration.
+- **Metrics** — "how is the system doing?" Cheap aggregated numbers over time
+  (request rate, error rate, latency percentiles). Metrics feed dashboards and
+  alerts; they tell you *that* something is wrong.
+- **Traces** — "where did this request spend its time?" One request's journey
+  across services, timed span by span. Traces tell you *where* it is wrong —
+  in a distributed system, they are the only sane answer to "why was this slow?"
+
+The glue is a **correlation ID**: generated at the edge, passed through every
+call and queue message, attached to every log line. Without it, debugging a
+distributed flow is archaeology.
+
+### Percentiles, not averages
+
+Average latency is a lie of comfort: 99 requests at 10 ms and one at 5 s
+average to ~60 ms while a user stares at a spinner. Watch **p95/p99** — the
+experience of your unluckiest users, and usually your heaviest ones (largest
+carts, most data). This is why every latency figure in this editor's simulation
+reports percentiles.
+
+The workhorse dashboard is **RED** per service: **R**ate, **E**rrors,
+**D**uration percentiles. For machines, **USE**: Utilization, Saturation, Errors.
+
+### Alerting that people don't mute
+
+Alert on **symptoms** (users failing: error rate, p99, queue age) and page
+someone only for what is *urgent and actionable*. Alert on every cause (CPU
+spikes, single pod restarts) and you breed alert fatigue — the real outage gets
+muted along with the noise. **SLOs** formalize this: define a target (99.9% of
+requests under 500 ms), spend the error budget consciously, and alert when the
+budget burns too fast.
+
+**Common production mistakes**
+
+- Adding observability *after* the incident that needed it.
+- Unstructured logs (`"something went wrong"`) that cannot be searched or counted.
+- Dashboards nobody looks at plus alerts everybody ignores — observability as
+  decoration.
+
+**Interview questions to be ready for**
+
+- "Logs vs. metrics vs. traces — when do you reach for each?"
+- "Why is p99 more useful than average latency?"
+- "How do you debug one slow request across six services?"
+
+**Try it:** attach a Logger/Metrics node with a sample rate of 1.0 to a
+high-traffic flow and check its resource cost in the simulation — then try 0.1
+and see why sampling exists.
+
+---
+
+## 29. High availability and disaster recovery
+
+### The arithmetic of nines
+
+| Availability | Downtime per year |
+|---|---|
+| 99% | ~3.7 days |
+| 99.9% | ~8.8 hours |
+| 99.99% | ~53 minutes |
+| 99.999% | ~5 minutes |
+
+Two lessons hide in this table. First, each nine costs roughly 10× the
+engineering effort. Second, **serial dependencies multiply**: five 99.9%
+services in a request chain yield 99.5% (~44 h/year). Long synchronous chains
+are availability poison — which is one more argument for queues.
+
+### High availability = no single point of failure
+
+The recipe is redundancy plus automatic failover: multiple replicas behind a
+load balancer with health checks, a database replica promoted when the primary
+dies, everything spread across availability zones so one data-center power event
+is a non-event. Two rules keep it honest:
+
+- **N+1 sizing** — survive one instance dying *at peak load*, not at average.
+- **Failover you haven't tested is failover you don't have.** Promotion scripts
+  rot; test them on purpose, in daylight, before 3 a.m. tests them for you.
+
+### Disaster recovery — when the region burns
+
+HA handles component failure; **DR** handles losing everything in a region. Two
+numbers define your strategy: **RPO** (how much data may be lost — your backup/
+replication frequency) and **RTO** (how long recovery may take). The menu, in
+ascending cost: backups + restore (hours of RTO), pilot light (data replicated,
+minimal services warm), warm standby (scaled-down copy running), active-active
+(both regions serve; RTO ≈ 0, complexity ≈ maximum). Choose per system — the
+payments ledger and the avatar thumbnails do not deserve the same RPO.
+
+And the rule that survives every audit: **a backup you have never restored is a
+hope, not a backup.**
+
+### Failure recovery as a designed behavior
+
+Availability during *partial* failure is designed, not hoped for: queues let
+work wait out an outage, circuit breakers plus fallbacks keep the critical path
+alive, idempotent handlers make retry-after-recovery safe, and **backpressure**
+(rejecting early at the front door) keeps a degraded system from being buried by
+its own backlog the moment it stands up.
+
+**Common production mistakes**
+
+- Redundant app servers in front of a single-instance database — HA theater.
+- Failover automation that has never run against production data volumes.
+- DR plans that assume the people who wrote them are awake and reachable.
+
+**Interview questions to be ready for**
+
+- "Design for 99.99%. What does the last nine cost you?"
+- "RPO vs. RTO — define them and design a system for RPO = 0."
+- "What happens in the first 60 seconds after your primary database dies?"
+
+**Try it:** [Lab C](#16-guided-learning-labs) rehearses an outage with recovery;
+schedule a Database node offline and watch the queue, the failover window, and
+the drain — then compare designs that survive it against ones that don't.
+
+---
+
+## 30. Testing and evaluating architectures
+
+### What to measure
+
+Six numbers describe almost any backend's health. For each, know what "bad"
+looks like and what it implies:
+
+| Metric | Question it answers | The trap |
+|---|---|---|
+| Throughput | How much work per second? | Rising throughput with rising errors is collapse, not success |
+| Latency p50/p95/p99 | How long do users wait? | Averages hide the tail — see [§28](#28-observability-logging-metrics-and-tracing) |
+| Error rate | What fraction fails? | Timeouts count; a 30-s timeout is worse than a fast error |
+| Queue depth & age | Is work piling up? | Stable depth is buffering; *growing* depth is falling behind |
+| Utilization (CPU/mem/conn/IOPS) | How close to the ceiling? | The system dies at whichever ceiling is nearest, not the one you watch |
+| Cache hit ratio | Is the cache earning its keep? | Every point of hit rate lost lands directly on the database |
+
+### The load-testing family
+
+- **Load test** — expected traffic. Do we meet the SLO at normal and peak load?
+- **Stress test** — increase until failure. Where is the ceiling, *which
+  component is it*, and does the system degrade gracefully or collapse?
+- **Spike test** — sudden jumps (the push-notification effect). Ramp-ups hide
+  what real spikes reveal: autoscaling reaction time, connection storms,
+  thundering herds.
+- **Soak test** — normal load for hours or days. Finds what only time finds:
+  memory leaks, connection leaks, disks filling with logs.
+- **Chaos test** — inject failure (kill instances, add latency, partition the
+  network) and verify the resilience patterns of [§25](#25-resilience-patterns)
+  actually fire. Netflix's Chaos Monkey made this a discipline: run it first in
+  staging, then in production during business hours — an untested failover is
+  fiction.
+
+### How engineers read the results
+
+The craft is interpretation, and it follows a loop:
+
+1. **Find the knee.** Latency vs. load is flat until utilization approaches a
+   ceiling, then curves sharply upward. The knee is your true capacity;
+   production should live left of it.
+2. **Identify the bottleneck at the knee.** One component pegs first — that is
+   the constraint. The others' headroom is irrelevant until it moves.
+3. **Fix the constraint, not the symptom.** Slow queries at 100% DB CPU: adding
+   app servers *worsens* it (more connections, same DB). An index, a cache, or
+   a replica moves the constraint; then re-test and find the next one.
+4. **Change one thing at a time**, against a saved baseline — otherwise you
+   cannot attribute the improvement. This is exactly what the editor's baseline
+   comparison exists for.
+
+Two readings that save incidents: **retry amplification** (error rate rising
+*with* offered load rising faster than user traffic = your own retries attacking
+you — see [Lab D](#16-guided-learning-labs)), and **recovery shape** (after a
+failure clears, does the backlog drain or does the recovering service get
+trampled by it?).
+
+### Capacity planning in one paragraph
+
+Estimate demand (peak RPS × payload size), measure single-instance capacity at
+the knee, divide, add N+1 and ~30% headroom, and re-measure after every
+meaningful change. Back-of-envelope first, load test to confirm — in that
+order, both in interviews and in production.
+
+**Try it:** this is the editor's home game — run a baseline, save it, raise
+traffic until a node saturates, find the knee, fix the constraint, and compare.
+Labs A through F in [§16](#16-guided-learning-labs) are each one iteration of
+the loop above.
+
+---
+
+## 31. System design interviews: putting it together
+
+A repeatable structure for "design X," and for real design reviews:
+
+1. **Requirements (5 min).** Functional (what must it do) and non-functional
+   (scale, latency, availability, consistency). Ask about read/write ratio and
+   peak traffic — the answers choose half your architecture.
+2. **Estimation (5 min).** Users → RPS → storage growth. Only an order of
+   magnitude: 1M daily users ≈ ~12 RPS average, ~10× at peak. The point is
+   demonstrating you know *why* the numbers matter.
+3. **API and data model (10 min).** Core endpoints and entities. Flag what
+   needs transactions (strict pile) vs. what tolerates lag (relaxed pile) —
+   that is [§22](#22-consistency-cap-and-distributed-coordination) earning its keep.
+4. **High-level design (10 min).** Boxes and arrows: entry, LB, services,
+   database, cache, queue for anything async. Say the sync/async decision out
+   loud for each edge; interviewers listen for exactly that.
+5. **Scale and harden (15 min).** Find the bottleneck (usually the database),
+   apply the ladder — cache → replicas → sharding — add resilience patterns on
+   external calls, observability, and name the failure modes before being asked.
+
+Signals that separate candidates: driving the conversation with trade-offs
+("sessions would be simpler, but at three services JWTs avoid the shared
+lookup"), numbers attached to claims, and naming what breaks first under 10×
+load. Red flags: jumping to microservices before requirements, "just add a
+cache/shard it" without invalidation or key reasoning, and silence about failure.
+
+Every section of this handbook maps to a step above; the editor is the practice
+field. Design something, simulate 10× traffic, break a dependency, and explain
+the result out loud — that explanation *is* the interview.
+
+---
+
+## 32. Glossary
 
 | Term | Plain-language definition |
 |---|---|
@@ -1120,7 +1933,7 @@ exactly 84 ms.” Save baselines and make one meaningful change at a time.
 
 ---
 
-## 19. Where to go next
+## 33. Where to go next
 
 Build a small flow around one business event. Validate it, simulate it, save a baseline,
 and break one dependency on purpose. The most valuable question in System Flow is not

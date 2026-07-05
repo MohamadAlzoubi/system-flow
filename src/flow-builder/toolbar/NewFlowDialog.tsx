@@ -8,7 +8,7 @@ import { architectureGoalPresets } from "../inspector/architecture-goal-presets"
 
 const openQuestionsGoals: ArchitectureGoals = { orderingRequirement: "none" }
 
-function createFlow(name: string, goals: ArchitectureGoals): FlowGraph {
+function createFlow(name: string, goals: ArchitectureGoals | undefined): FlowGraph {
   return {
     id: `flow-${crypto.randomUUID()}`,
     name,
@@ -20,9 +20,9 @@ function createFlow(name: string, goals: ArchitectureGoals): FlowGraph {
       cpuCores: 8,
       memoryMb: 16000,
       networkLatencyMs: 5,
-      requestsPerSecond: goals.averageTrafficPerSecond ?? 100,
+      requestsPerSecond: goals?.averageTrafficPerSecond ?? 100,
       trafficPattern: "steady",
-      peakRequestsPerSecond: goals.peakTrafficPerSecond,
+      peakRequestsPerSecond: goals?.peakTrafficPerSecond,
     },
     architectureGoals: goals,
   }
@@ -35,7 +35,7 @@ type Props = {
 export function NewFlowDialog({ onClose }: Props) {
   const setGraph = useFlowEditorStore((state) => state.setGraph)
   const [name, setName] = useState("Untitled flow")
-  const [presetId, setPresetId] = useState(architectureGoalPresets[0].id)
+  const [presetId, setPresetId] = useState("free-build")
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -47,9 +47,13 @@ export function NewFlowDialog({ onClose }: Props) {
 
   const create = () => {
     const preset = architectureGoalPresets.find((item) => item.id === presetId)
-    setGraph(
-      createFlow(name.trim() || "Untitled flow", preset?.goals ?? openQuestionsGoals),
-    )
+    const goals =
+      presetId === "free-build"
+        ? undefined
+        : presetId === "open-questions"
+          ? openQuestionsGoals
+          : preset?.goals
+    setGraph(createFlow(name.trim() || "Untitled flow", goals))
     onClose()
   }
 
@@ -81,10 +85,26 @@ export function NewFlowDialog({ onClose }: Props) {
           />
         </label>
         <fieldset className="goal-preset-options">
-          <legend>Design goals</legend>
+          <legend>How do you want to start?</legend>
+          <label>
+            <input
+              type="radio"
+              name="goal-preset"
+              value="free-build"
+              checked={presetId === "free-build"}
+              onChange={() => setPresetId("free-build")}
+            />
+            <span>
+              <strong>Free build — blank canvas</strong>
+              <small>
+                Design any architecture you imagine. No targets, no template — add goals
+                later if you want the simulator to grade your design.
+              </small>
+            </span>
+          </label>
           <p className="goal-hint">
-            Pick the kind of flow you are designing. Every goal can be adjusted in the
-            inspector, and goals you leave unknown stay visible as open questions.
+            Or pick design goals up front. Every goal can be adjusted in the inspector,
+            and goals you leave unknown stay visible as open questions.
           </p>
           {architectureGoalPresets.map((preset) => (
             <label key={preset.id}>

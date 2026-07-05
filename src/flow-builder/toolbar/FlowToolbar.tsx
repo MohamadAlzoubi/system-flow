@@ -72,14 +72,21 @@ export function FlowToolbar() {
       <div className="brand">
         <Workflow size={21} />
         <strong>System Flow</strong>
+        <span className="flow-name" title={graph.name}>
+          {graph.name}
+        </span>
         <select
-          aria-label="Example flow"
-          value={graph.id}
+          aria-label="Load an example flow"
+          title="Load an example flow (replaces the current canvas)"
+          value=""
           onChange={(event) => {
             const example = examples.find((item) => item.id === event.target.value)
             if (example) setGraph(structuredClone(example))
           }}
         >
+          <option value="" disabled>
+            Examples…
+          </option>
           {examples.map((example) => (
             <option value={example.id} key={example.id}>
               {example.name}

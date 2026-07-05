@@ -8,6 +8,8 @@ import {
   type Node,
   type NodeChange,
   ReactFlow,
+  ReactFlowProvider,
+  useReactFlow,
 } from "@xyflow/react"
 import { useCallback, useEffect, useMemo } from "react"
 import "@xyflow/react/dist/style.css"
@@ -15,6 +17,7 @@ import type { InteractionType } from "../../contracts"
 import { inferInteractionDefaults } from "../../engine"
 import { nodeRegistry } from "../../node-registry"
 import { useFlowEditorStore } from "../../store/flow-editor.store"
+import { nodeDragMimeType } from "../dnd"
 import { SystemNode } from "./SystemNode"
 
 const nodeTypes = { systemNode: SystemNode }
@@ -31,8 +34,18 @@ const interactionDashes: Record<InteractionType, string | undefined> = {
 }
 
 export function FlowCanvas() {
+  return (
+    <ReactFlowProvider>
+      <FlowCanvasInner />
+    </ReactFlowProvider>
+  )
+}
+
+function FlowCanvasInner() {
   const graph = useFlowEditorStore((state) => state.graph)
   const addEdge = useFlowEditorStore((state) => state.addEdge)
+  const addNode = useFlowEditorStore((state) => state.addNode)
+  const { screenToFlowPosition } = useReactFlow()
   const removeEdges = useFlowEditorStore((state) => state.removeEdges)
   const removeNodes = useFlowEditorStore((state) => state.removeNodes)
   const setNodePosition = useFlowEditorStore((state) => state.setNodePosition)
@@ -210,6 +223,20 @@ export function FlowCanvas() {
     },
     [addEdge, graph.dataContracts, graph.nodes, setSelectedEdge],
   )
+  const onDragOver = useCallback((event: React.DragEvent) => {
+    if (!event.dataTransfer.types.includes(nodeDragMimeType)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = "move"
+  }, [])
+  const onDrop = useCallback(
+    (event: React.DragEvent) => {
+      const type = event.dataTransfer.getData(nodeDragMimeType)
+      if (!type) return
+      event.preventDefault()
+      addNode(type, screenToFlowPosition({ x: event.clientX, y: event.clientY }))
+    },
+    [addNode, screenToFlowPosition],
+  )
 
   return (
     <section className="canvas">
@@ -220,6 +247,8 @@ export function FlowCanvas() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
         onNodeClick={(_, node) => setSelectedNode(node.id)}
         onEdgeClick={(_, edge) => setSelectedEdge(edge.id)}
         onPaneClick={() => {

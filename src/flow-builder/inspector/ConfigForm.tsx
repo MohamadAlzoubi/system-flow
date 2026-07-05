@@ -1,8 +1,15 @@
+import { GraduationCap, Info, Settings2 } from "lucide-react"
 import { useEffect } from "react"
 import { useForm } from "react-hook-form"
 import { Button } from "../../components/ui/button"
 import { Input } from "../../components/ui/input"
 import type { NodeDefinition, NodeInstance } from "../../contracts"
+import {
+  getNodeMeta,
+  isAdvancedField,
+  type ResolvedFieldMeta,
+  resolveFieldMeta,
+} from "./field-meta"
 
 type ConfigFormProps = {
   node: NodeInstance
@@ -10,81 +17,30 @@ type ConfigFormProps = {
   onSave: (config: Record<string, unknown>) => void
 }
 
-const recommendedRanges: Record<string, string> = {
-  failureRate: "Recommended: 0–0.1",
-  concurrency: "Typical starting range: 1–100",
-  replicas: "Typical starting range: 1–20",
-  cpuLimitCores: "Typical range: 0.25–8 cores",
-  memoryLimitMb: "Typical range: 128–8192 MB",
-  timeoutMs: "Keep above expected p99 latency",
-  prefetch: "Typical range: 1–500 per consumer",
-  connectionPoolSize: "Keep below database maximum connections",
-  cacheHitPercentage: "Measure from production when possible",
-  bandwidthMbps: "Use the slowest real network segment",
-  outagePercent: "Use 0 for baseline; 1–20 for failure scenarios",
-}
-
-const fieldDescriptions: Record<string, string> = {
-  concurrency: "Maximum jobs one replica can process at the same time.",
-  replicas: "Number of service instances available at the start of the run.",
-  failureRate: "Expected fraction of operations that fail before retrying.",
-  timeoutMs: "Maximum time allowed before an operation is treated as failed.",
-  averageProcessingMs: "Typical time needed to process one job.",
-  maxInFlight: "Maximum accepted work that may be waiting or executing.",
-  retryCount: "Maximum number of additional attempts after the first failure.",
-  retryBackoffMs: "Delay before the first retry; later retries grow exponentially.",
-  retryJitterPercent: "Randomizes retry timing to reduce synchronized retry storms.",
-  prefetch: "Messages reserved by each consumer before acknowledgement.",
-  maxQueueSize: "Maximum messages retained before overflow handling begins.",
-  messageTtlMs: "Maximum time a message may wait before it expires.",
-  connectionPoolSize: "Database connections this component keeps ready for work.",
-  storageIops: "Maximum storage input/output operations available each second.",
-  cacheHitPercentage: "Requests served without reaching the backing datastore.",
-  replicationLagMs: "Delay before replica data catches up with the primary.",
-  bandwidthMbps: "Maximum network transfer capacity in megabits per second.",
-}
-
-const selectOptions: Record<string, string[]> = {
-  "network.load-balancer.algorithm": ["round-robin", "least-connections", "weighted"],
-  "resilience.rate-limiter.strategy": ["token-bucket", "fixed-window", "sliding-window"],
-  "storage.object.operation": ["put", "get", "delete"],
-  "redis.cache.operation": ["read", "write", "read-write"],
-  "redis.cache.evictionPolicy": [
-    "noeviction",
-    "allkeys-lru",
-    "volatile-lru",
-    "allkeys-lfu",
-    "volatile-ttl",
-  ],
-  "rabbitmq.queue.exchangeType": ["direct", "topic", "fanout", "headers"],
-  "database.databaseType": ["postgresql", "mysql", "mongodb", "dynamodb", "cassandra"],
-  "database.operation": ["read", "insert", "update", "delete", "transaction"],
-  "http.endpoint.method": ["GET", "POST", "PUT", "PATCH", "DELETE"],
-  "worker.ackMode": ["automatic", "manual", "none"],
-  "websocket.gateway.broadcastMode": ["direct", "room", "broadcast"],
+/** Mirrors the education page slugs so Learn links land on the node's section. */
+function educationSlug(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
 }
 
 function fieldGroup(key: string): string {
   if (/latency|timeout|delay|duration|interval|ttl|processing|backoff|lag/i.test(key)) {
     return "Timing"
   }
-  if (/failure|retry|durable|ack|dead|outage|circuit|health/i.test(key)) {
+  if (/failure|retry|durable|ack|dead|outage|circuit|health|recovery/i.test(key)) {
     return "Reliability"
   }
   if (
-    /capacity|concurrency|replica|connection|throughput|rate|memory|cpu|iops|size|prefetch|partition|bandwidth/i.test(
+    /capacity|concurrency|replica|connection|throughput|rate|memory|cpu|iops|size|prefetch|partition|bandwidth|quota|scal/i.test(
       key,
     )
   ) {
-    return "Capacity"
+    return "Capacity & scaling"
   }
   return "General"
-}
-
-function describeField(key: string): string {
-  if (fieldDescriptions[key]) return fieldDescriptions[key]
-  const label = key.replace(/([A-Z])/g, " $1").toLowerCase()
-  return `Controls the ${label} used by this node during deterministic simulation.`
 }
 
 export function ConfigForm({ node, definition, onSave }: ConfigFormProps) {
@@ -92,6 +48,7 @@ export function ConfigForm({ node, definition, onSave }: ConfigFormProps) {
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors },
     setError,
   } = useForm<Record<string, unknown>>({ defaultValues: node.config })
@@ -111,69 +68,134 @@ export function ConfigForm({ node, definition, onSave }: ConfigFormProps) {
     }
     onSave(result.data as Record<string, unknown>)
   }
-  const groupedFields = Object.entries(node.config).reduce(
-    (groups, entry) => {
-      const group = fieldGroup(entry[0])
-      groups[group] = [...(groups[group] ?? []), entry]
-      return groups
-    },
-    {} as Record<string, Array<[string, unknown]>>,
-  )
+
+  const meta = getNodeMeta(node.type)
+  const entries = Object.entries(node.config)
+  const essentialEntries = meta?.essentials
+    ? meta.essentials
+        .map((key) => entries.find(([candidate]) => candidate === key))
+        .filter((entry): entry is [string, unknown] => entry !== undefined)
+    : entries.filter(([key]) => !isAdvancedField(node.type, key))
+  const advancedEntries = entries.filter(([key]) => isAdvancedField(node.type, key))
+  const groupedAdvanced =
+    advancedEntries.length > 5
+      ? advancedEntries.reduce(
+          (groups, entry) => {
+            const group = fieldGroup(entry[0])
+            groups[group] = [...(groups[group] ?? []), entry]
+            return groups
+          },
+          {} as Record<string, Array<[string, unknown]>>,
+        )
+      : { "": advancedEntries }
+
+  const renderControl = (key: string, value: unknown, field: ResolvedFieldMeta) => {
+    if (field.options) {
+      const current = watch(key)
+      const selected = field.options.find((option) => option.value === current)
+      return (
+        <>
+          <select id={`config-${key}`} {...register(key)}>
+            {field.options.map((option) => (
+              <option value={option.value} key={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          {selected?.hint && <small className="select-hint">{selected.hint}</small>}
+        </>
+      )
+    }
+    if (typeof value === "boolean") {
+      return <input id={`config-${key}`} type="checkbox" {...register(key)} />
+    }
+    if (typeof value === "object") {
+      return (
+        <textarea
+          id={`config-${key}`}
+          defaultValue={JSON.stringify(value, null, 2)}
+          placeholder={field.placeholder}
+          onChange={(event) => {
+            try {
+              const parsed = JSON.parse(event.target.value)
+              register(key).onChange({ target: { name: key, value: parsed } })
+            } catch {
+              setError(key, { message: "Enter valid JSON" })
+            }
+          }}
+        />
+      )
+    }
+    return (
+      <Input
+        id={`config-${key}`}
+        type={typeof value === "number" ? "number" : "text"}
+        step={typeof value === "number" ? "any" : undefined}
+        placeholder={field.placeholder}
+        {...register(key, { valueAsNumber: typeof value === "number" })}
+      />
+    )
+  }
+
+  const renderField = ([key, value]: [string, unknown]) => {
+    const field = resolveFieldMeta(node.type, key)
+    const isToggle = typeof value === "boolean" && !field.options
+    return (
+      <label
+        htmlFor={`config-${key}`}
+        key={key}
+        className={isToggle ? "config-field field-toggle" : "config-field"}
+      >
+        <span className="field-head">
+          <span className="field-label">{field.label}</span>
+          {field.unit && <em className="field-unit">{field.unit}</em>}
+          <span className="field-info" data-tip={field.help}>
+            <Info size={12} aria-label={field.help} />
+          </span>
+        </span>
+        {renderControl(key, value, field)}
+        {errors[key]?.message && (
+          <small className="field-error">{String(errors[key]?.message)}</small>
+        )}
+        {field.recommend && <small className="field-guidance">{field.recommend}</small>}
+      </label>
+    )
+  }
 
   return (
-    <form onSubmit={handleSubmit(submit)}>
-      {Object.entries(groupedFields).map(([group, fields]) => (
-        <fieldset className="config-group" key={group}>
-          <legend>{group}</legend>
-          {fields.map(([key, value]) => (
-            <label htmlFor={`config-${key}`} key={key}>
-              <span className="field-label">{key.replace(/([A-Z])/g, " $1")}</span>
-              <small className="field-description">{describeField(key)}</small>
-              {selectOptions[`${node.type}.${key}`] ? (
-                <select id={`config-${key}`} {...register(key)}>
-                  {selectOptions[`${node.type}.${key}`].map((option) => (
-                    <option value={option} key={option}>
-                      {option.replaceAll("-", " ")}
-                    </option>
-                  ))}
-                </select>
-              ) : typeof value === "boolean" ? (
-                <input id={`config-${key}`} type="checkbox" {...register(key)} />
-              ) : typeof value === "object" ? (
-                <textarea
-                  id={`config-${key}`}
-                  defaultValue={JSON.stringify(value, null, 2)}
-                  onChange={(event) => {
-                    try {
-                      const parsed = JSON.parse(event.target.value)
-                      register(key).onChange({
-                        target: { name: key, value: parsed },
-                      })
-                    } catch {
-                      setError(key, { message: "Enter valid JSON" })
-                    }
-                  }}
-                />
-              ) : (
-                <Input
-                  id={`config-${key}`}
-                  type={typeof value === "number" ? "number" : "text"}
-                  step={typeof value === "number" ? "any" : undefined}
-                  {...register(key, {
-                    valueAsNumber: typeof value === "number",
-                  })}
-                />
-              )}
-              {errors[key]?.message && (
-                <small className="field-error">{String(errors[key]?.message)}</small>
-              )}
-              {recommendedRanges[key] && (
-                <small className="field-guidance">{recommendedRanges[key]}</small>
-              )}
-            </label>
-          ))}
-        </fieldset>
-      ))}
+    <form onSubmit={handleSubmit(submit)} className="config-form">
+      {meta?.summary && (
+        <p className="node-summary">
+          {meta.summary}{" "}
+          <a
+            className="node-learn-link"
+            href={`/education#${educationSlug(definition.label)}`}
+            aria-label={`Open the ${definition.label} handbook entry`}
+          >
+            <GraduationCap size={12} /> Handbook entry
+          </a>
+        </p>
+      )}
+      {essentialEntries.map(renderField)}
+      {advancedEntries.length > 0 && (
+        <details className="advanced-fields">
+          <summary>
+            <Settings2 size={13} />
+            Advanced settings
+            <span className="advanced-count">{advancedEntries.length}</span>
+          </summary>
+          {Object.entries(groupedAdvanced).map(([group, fields]) =>
+            group ? (
+              <fieldset className="config-group" key={group}>
+                <legend>{group}</legend>
+                {fields.map(renderField)}
+              </fieldset>
+            ) : (
+              fields.map(renderField)
+            ),
+          )}
+        </details>
+      )}
       <Button className="inspector-save" type="submit">
         Apply changes
       </Button>
