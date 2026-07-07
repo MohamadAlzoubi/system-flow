@@ -5,6 +5,10 @@ import { Button } from "../../components/ui/button"
 import { Input } from "../../components/ui/input"
 import type { NodeDefinition, NodeInstance } from "../../contracts"
 import {
+  applyCapacityPreset,
+  capacityPresetsFor,
+} from "../../node-registry/capacity-presets"
+import {
   getNodeMeta,
   isAdvancedField,
   type ResolvedFieldMeta,
@@ -70,6 +74,7 @@ export function ConfigForm({ node, definition, onSave }: ConfigFormProps) {
   }
 
   const meta = getNodeMeta(node.type)
+  const presets = capacityPresetsFor(node.type)
   const entries = Object.entries(node.config)
   const essentialEntries = meta?.essentials
     ? meta.essentials
@@ -175,6 +180,37 @@ export function ConfigForm({ node, definition, onSave }: ConfigFormProps) {
             <GraduationCap size={12} /> Handbook entry
           </a>
         </p>
+      )}
+      {presets.length > 0 && (
+        <label className="capacity-preset" htmlFor={`capacity-preset-${node.id}`}>
+          Capacity preset
+          <select
+            id={`capacity-preset-${node.id}`}
+            value=""
+            onChange={(event) => {
+              const preset = presets.find(
+                (candidate) => candidate.id === event.target.value,
+              )
+              if (!preset) return
+              const config = applyCapacityPreset(node.config, preset)
+              const result = definition.configSchema.safeParse(config)
+              if (!result.success) return
+              const explicit = result.data as Record<string, unknown>
+              reset(explicit)
+              onSave(explicit)
+            }}
+          >
+            <option value="">Choose a deployment shape…</option>
+            {presets.map((preset) => (
+              <option key={preset.id} value={preset.id} title={preset.description}>
+                {preset.label}
+              </option>
+            ))}
+          </select>
+          <small className="select-hint">
+            Applying a preset fills the fields below; every value remains editable.
+          </small>
+        </label>
       )}
       {essentialEntries.map(renderField)}
       {advancedEntries.length > 0 && (

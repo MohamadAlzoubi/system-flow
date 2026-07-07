@@ -1,0 +1,4991 @@
+{
+  "id": "flow-1bcea2b7-7c9b-4b72-a043-f91ae0983016",
+  "name": "Global Multi-Region Ecommerce - 120k RPS Architecture Test",
+  "nodes": [
+    {
+      "id": "global-shopper-traffic",
+      "type": "event.source",
+      "position": {
+        "x": -1900,
+        "y": 120
+      },
+      "config": {
+        "eventType": "ShopperRequest",
+        "ratePerSecond": 120000,
+        "payloadSizeBytes": 1800,
+        "burstMode": true
+      },
+      "boundaryId": "trust-public-edge",
+      "responsibility": {
+        "owner": "growth-platform",
+        "deploymentRegion": "global-edge",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "internal",
+        "implementationStatus": "planned",
+        "notes": "Synthetic global shopper traffic source for import testing."
+      }
+    },
+    {
+      "id": "global-cdn-edge-cache",
+      "type": "network.cdn",
+      "position": {
+        "x": -1560,
+        "y": 120
+      },
+      "config": {
+        "edgeLocations": 160,
+        "cacheHitPercent": 91,
+        "edgeCapacityPerSecond": 12000,
+        "hitLatencyMs": 18,
+        "missLatencyMs": 95
+      },
+      "boundaryId": "trust-public-edge",
+      "responsibility": {
+        "owner": "edge-platform",
+        "deploymentRegion": "global-edge",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "public",
+        "implementationStatus": "planned",
+        "notes": "Serves static assets and cacheable catalog pages before regional origin routing."
+      }
+    },
+    {
+      "id": "global-traffic-manager",
+      "type": "network.load-balancer",
+      "position": {
+        "x": -1210,
+        "y": 120
+      },
+      "config": {
+        "algorithm": "weighted",
+        "healthyTargets": 3,
+        "capacityPerTarget": 65000,
+        "connectionLimit": 240000,
+        "averageLatencyMs": 3,
+        "healthCheckIntervalSeconds": 5
+      },
+      "routingPolicy": {
+        "mode": "weighted"
+      },
+      "boundaryId": "trust-public-edge",
+      "responsibility": {
+        "owner": "edge-platform",
+        "deploymentRegion": "global-edge",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "internal",
+        "implementationStatus": "planned",
+        "notes": "Weighted active-active regional routing with health-check based failaway."
+      }
+    },
+    {
+      "id": "global-order-event-backbone",
+      "type": "stream.kafka-topic",
+      "position": {
+        "x": 3340,
+        "y": 120
+      },
+      "config": {
+        "topicName": "global.order.events.v1",
+        "partitions": 96,
+        "replicas": 5,
+        "throughputPerPartition": 5000,
+        "acknowledgementLatencyMs": 7,
+        "retentionHours": 168
+      },
+      "boundaryId": "global-analytics-boundary",
+      "responsibility": {
+        "owner": "data-platform",
+        "deploymentRegion": "us-east-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "internal",
+        "implementationStatus": "planned",
+        "notes": "Global event backbone fed by all active regions."
+      },
+      "stateOwnership": {
+        "dataOwned": ["OrderCreatedEvent"],
+        "allowedWriterIds": [],
+        "consistencyModel": "eventual",
+        "conflictResolution": "merge",
+        "transactionBoundary": "Append-only order event stream keyed by orderId."
+      }
+    },
+    {
+      "id": "global-analytics-stream",
+      "type": "stream.processor",
+      "position": {
+        "x": 3720,
+        "y": 120
+      },
+      "config": {
+        "parallelism": 96,
+        "eventsPerTaskSecond": 4500,
+        "windowSeconds": 30,
+        "checkpointIntervalMs": 5000,
+        "processingLatencyMs": 35
+      },
+      "boundaryId": "global-analytics-boundary",
+      "responsibility": {
+        "owner": "data-platform",
+        "deploymentRegion": "us-east-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "internal",
+        "implementationStatus": "planned",
+        "notes": "Aggregates order, payment, and catalog telemetry for near-real-time dashboards."
+      }
+    },
+    {
+      "id": "global-data-lake",
+      "type": "storage.object",
+      "position": {
+        "x": 4100,
+        "y": -40
+      },
+      "config": {
+        "operation": "put",
+        "requestsPerSecond": 220000,
+        "averageLatencyMs": 75,
+        "bandwidthMbps": 80000,
+        "durabilityCopies": 6
+      },
+      "boundaryId": "global-analytics-boundary",
+      "responsibility": {
+        "owner": "data-platform",
+        "deploymentRegion": "us-east-1",
+        "stateful": true,
+        "sourceOfTruth": true,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned",
+        "notes": "Immutable analytics sink for compliance, replay, and BI workloads."
+      },
+      "stateOwnership": {
+        "dataOwned": ["AnalyticsEvent"],
+        "allowedWriterIds": ["global-analytics-stream"],
+        "consistencyModel": "eventual",
+        "conflictResolution": "merge",
+        "transactionBoundary": "One immutable object batch per analytics window."
+      }
+    },
+    {
+      "id": "global-observability-metrics",
+      "type": "logger.metrics",
+      "position": {
+        "x": 4100,
+        "y": 290
+      },
+      "config": {
+        "sampleRate": 0.2,
+        "retentionDays": 45,
+        "averageWriteMs": 4
+      },
+      "boundaryId": "global-analytics-boundary",
+      "responsibility": {
+        "owner": "sre-platform",
+        "deploymentRegion": "us-east-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "internal",
+        "implementationStatus": "planned",
+        "notes": "Sampled request and queue telemetry for the ecommerce architecture test."
+      }
+    },
+    {
+      "id": "us-rate-limiter",
+      "type": "resilience.rate-limiter",
+      "position": {
+        "x": -840,
+        "y": -720
+      },
+      "config": {
+        "strategy": "token-bucket",
+        "quota": 90000,
+        "windowSeconds": 1,
+        "burstCapacity": 31500,
+        "averageLatencyMs": 1
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "edge-platform",
+        "deploymentRegion": "us-east-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "internal",
+        "implementationStatus": "planned",
+        "notes": "US East ingress abuse and flash-sale surge limiter."
+      }
+    },
+    {
+      "id": "us-traffic-router",
+      "type": "router.condition",
+      "position": {
+        "x": -520,
+        "y": -720
+      },
+      "config": {
+        "rules": [
+          {
+            "condition": "route == catalog-read",
+            "target": "us-catalog-http"
+          },
+          {
+            "condition": "route == search",
+            "target": "us-search-http"
+          },
+          {
+            "condition": "route == cart-mutation",
+            "target": "us-cart-http"
+          },
+          {
+            "condition": "route == checkout",
+            "target": "us-checkout-http"
+          }
+        ]
+      },
+      "routingPolicy": {
+        "mode": "weighted"
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "platform-sre",
+        "deploymentRegion": "us-east-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "internal",
+        "implementationStatus": "planned",
+        "notes": "US East product-domain request router."
+      }
+    },
+    {
+      "id": "us-catalog-http",
+      "type": "http.endpoint",
+      "position": {
+        "x": -160,
+        "y": -1020
+      },
+      "config": {
+        "method": "GET",
+        "path": "/api/us-east-1/catalog/products",
+        "timeoutMs": 900,
+        "authRequired": false,
+        "maxRequestsPerSecond": 64800,
+        "averageLatencyMs": 18
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "catalog-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "public",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "us-catalog-cache",
+      "type": "redis.cache",
+      "position": {
+        "x": 560,
+        "y": -1020
+      },
+      "config": {
+        "operation": "read",
+        "keyPattern": "catalog:us-east-1:{sku}",
+        "ttlSeconds": 90,
+        "hitRate": 0.88,
+        "averageReadMs": 2,
+        "averageWriteMs": 4,
+        "maxMemoryMb": 262144,
+        "itemSizeBytes": 3200,
+        "evictionPolicy": "allkeys-lfu"
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "catalog-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "public",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["ProductRecord"],
+        "allowedWriterIds": ["us-catalog-http"],
+        "consistencyModel": "eventual",
+        "cacheInvalidation": "event-driven",
+        "freshnessToleranceMs": 3000,
+        "readConsumerIds": ["us-catalog-http"]
+      }
+    },
+    {
+      "id": "us-catalog-read-replica",
+      "type": "data.read-replica",
+      "position": {
+        "x": 930,
+        "y": -1020
+      },
+      "config": {
+        "replicaCount": 24,
+        "readsPerReplicaSecond": 6500,
+        "averageReadMs": 14,
+        "replicationLagMs": 250,
+        "maxConnectionsPerReplica": 1200
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "catalog-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "public",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["ProductRecord"],
+        "allowedWriterIds": ["global-analytics-stream"],
+        "consistencyModel": "eventual",
+        "cacheInvalidation": "event-driven",
+        "freshnessToleranceMs": 3000,
+        "readConsumerIds": ["us-catalog-cache", "us-catalog-http"]
+      }
+    },
+    {
+      "id": "us-search-http",
+      "type": "http.endpoint",
+      "position": {
+        "x": -160,
+        "y": -820
+      },
+      "config": {
+        "method": "GET",
+        "path": "/api/us-east-1/search",
+        "timeoutMs": 1000,
+        "authRequired": false,
+        "maxRequestsPerSecond": 32400,
+        "averageLatencyMs": 24
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "search-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "public",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "us-search-index",
+      "type": "data.search-engine",
+      "position": {
+        "x": 930,
+        "y": -820
+      },
+      "config": {
+        "shards": 48,
+        "replicas": 2,
+        "queriesPerShardSecond": 1100,
+        "averageQueryMs": 38,
+        "indexingPerSecond": 16000
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "search-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "public",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["ProductRecord"],
+        "allowedWriterIds": ["global-analytics-stream"],
+        "consistencyModel": "eventual",
+        "conflictResolution": "last-write-wins",
+        "freshnessToleranceMs": 5000,
+        "readConsumerIds": ["us-search-http"]
+      }
+    },
+    {
+      "id": "us-cart-http",
+      "type": "http.endpoint",
+      "position": {
+        "x": -160,
+        "y": -600
+      },
+      "config": {
+        "method": "POST",
+        "path": "/api/us-east-1/cart/items",
+        "timeoutMs": 1400,
+        "authRequired": true,
+        "maxRequestsPerSecond": 30600,
+        "averageLatencyMs": 30
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "cart-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "us-cart-cache",
+      "type": "redis.cache",
+      "position": {
+        "x": 560,
+        "y": -600
+      },
+      "config": {
+        "operation": "read-write",
+        "keyPattern": "cart:us-east-1:{cartId}",
+        "ttlSeconds": 86400,
+        "hitRate": 0.81,
+        "averageReadMs": 2,
+        "averageWriteMs": 5,
+        "maxMemoryMb": 524288,
+        "itemSizeBytes": 4600,
+        "evictionPolicy": "volatile-ttl"
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "cart-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["CartMutationCommand", "CartState"],
+        "allowedWriterIds": ["us-cart-http"],
+        "consistencyModel": "eventual",
+        "cacheInvalidation": "write-through",
+        "freshnessToleranceMs": 1000,
+        "readConsumerIds": ["us-cart-http", "us-checkout-http"]
+      }
+    },
+    {
+      "id": "us-cart-db",
+      "type": "database",
+      "position": {
+        "x": 930,
+        "y": -600
+      },
+      "config": {
+        "databaseType": "dynamodb",
+        "operation": "update",
+        "averageQueryMs": 12,
+        "connectionPoolSize": 900,
+        "maxWritesPerSecond": 42000,
+        "maxReadsPerSecond": 85000,
+        "readPercentage": 25,
+        "cacheHitPercentage": 0,
+        "maxConnections": 1200,
+        "storageIops": 140000,
+        "iopsPerOperation": 2,
+        "contentionPercentage": 4,
+        "averageTransactionMs": 12,
+        "readReplicaCount": 2,
+        "replicationLagMs": 120,
+        "primaryAvailable": true,
+        "failoverSeconds": 35,
+        "documentSizeBytes": 4200,
+        "indexUsed": true
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "cart-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": true,
+        "sourceOfTruth": true,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["CartState"],
+        "allowedWriterIds": ["us-cart-cache"],
+        "consistencyModel": "read-after-write",
+        "conflictResolution": "last-write-wins",
+        "transactionBoundary": "One cart mutation per cartId and cartMutationId.",
+        "readConsumerIds": ["us-cart-cache", "us-checkout-http"]
+      }
+    },
+    {
+      "id": "us-checkout-http",
+      "type": "http.endpoint",
+      "position": {
+        "x": -160,
+        "y": -360
+      },
+      "config": {
+        "method": "POST",
+        "path": "/api/us-east-1/checkout",
+        "timeoutMs": 1800,
+        "authRequired": true,
+        "maxRequestsPerSecond": 16200,
+        "averageLatencyMs": 36
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "checkout-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "us-order-service",
+      "type": "function.service",
+      "position": {
+        "x": 210,
+        "y": -360
+      },
+      "config": {
+        "functionName": "us-east-1-checkout-orchestrator",
+        "averageExecutionMs": 32,
+        "cpuCostPerRequest": 0.0016,
+        "memoryMbPerRequest": 18,
+        "failureRate": 0.002
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "checkout-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned",
+        "notes": "Validates cart, reserves inventory, and commits the order record."
+      }
+    },
+    {
+      "id": "us-inventory-cache",
+      "type": "redis.cache",
+      "position": {
+        "x": 560,
+        "y": -360
+      },
+      "config": {
+        "operation": "read-write",
+        "keyPattern": "inventory:us-east-1:{sku}",
+        "ttlSeconds": 8,
+        "hitRate": 0.72,
+        "averageReadMs": 2,
+        "averageWriteMs": 4,
+        "maxMemoryMb": 131072,
+        "itemSizeBytes": 1200,
+        "evictionPolicy": "volatile-ttl"
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "inventory-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "internal",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["InventoryRecord"],
+        "allowedWriterIds": ["us-order-service"],
+        "consistencyModel": "eventual",
+        "cacheInvalidation": "ttl",
+        "freshnessToleranceMs": 800,
+        "readConsumerIds": ["us-order-service"]
+      }
+    },
+    {
+      "id": "us-inventory-db",
+      "type": "database",
+      "position": {
+        "x": 930,
+        "y": -360
+      },
+      "config": {
+        "databaseType": "cassandra",
+        "operation": "transaction",
+        "averageQueryMs": 18,
+        "connectionPoolSize": 700,
+        "maxWritesPerSecond": 26000,
+        "maxReadsPerSecond": 50000,
+        "readPercentage": 35,
+        "cacheHitPercentage": 0,
+        "maxConnections": 900,
+        "storageIops": 110000,
+        "iopsPerOperation": 3,
+        "contentionPercentage": 12,
+        "averageTransactionMs": 22,
+        "readReplicaCount": 2,
+        "replicationLagMs": 450,
+        "primaryAvailable": true,
+        "failoverSeconds": 45,
+        "documentSizeBytes": 1300,
+        "indexUsed": true
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "inventory-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": true,
+        "sourceOfTruth": true,
+        "dataClassification": "internal",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["InventoryRecord"],
+        "allowedWriterIds": ["us-inventory-cache"],
+        "consistencyModel": "strong",
+        "conflictResolution": "single-writer",
+        "transactionBoundary": "Atomic reservation per sku and orderId.",
+        "readConsumerIds": ["us-inventory-cache", "us-order-service"]
+      }
+    },
+    {
+      "id": "us-order-db-proxy",
+      "type": "data.database-proxy",
+      "position": {
+        "x": 560,
+        "y": -140
+      },
+      "config": {
+        "clientConnections": 45000,
+        "databaseConnections": 1800,
+        "multiplexingRatio": 24,
+        "averageLatencyMs": 3
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "checkout-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": [],
+        "allowedWriterIds": ["us-inventory-db"],
+        "consistencyModel": "strong",
+        "conflictResolution": "single-writer",
+        "transactionBoundary": "Connection pooling only; no durable state."
+      }
+    },
+    {
+      "id": "us-order-db",
+      "type": "database",
+      "position": {
+        "x": 930,
+        "y": -140
+      },
+      "config": {
+        "databaseType": "postgresql",
+        "operation": "transaction",
+        "averageQueryMs": 20,
+        "connectionPoolSize": 1500,
+        "maxWritesPerSecond": 18000,
+        "maxReadsPerSecond": 42000,
+        "readPercentage": 20,
+        "cacheHitPercentage": 0,
+        "maxConnections": 1800,
+        "storageIops": 140000,
+        "iopsPerOperation": 4,
+        "contentionPercentage": 8,
+        "averageTransactionMs": 26,
+        "readReplicaCount": 3,
+        "replicationLagMs": 180,
+        "primaryAvailable": true,
+        "failoverSeconds": 40,
+        "documentSizeBytes": 2600,
+        "indexUsed": true
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "checkout-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": true,
+        "sourceOfTruth": true,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["OrderRecord"],
+        "allowedWriterIds": ["us-order-db-proxy"],
+        "consistencyModel": "strong",
+        "conflictResolution": "merge",
+        "transactionBoundary": "One order commit per orderId; globally unique id generated before write.",
+        "readConsumerIds": ["us-order-service", "us-payment-worker"]
+      }
+    },
+    {
+      "id": "us-order-events",
+      "type": "stream.kafka-topic",
+      "position": {
+        "x": 1300,
+        "y": -140
+      },
+      "config": {
+        "topicName": "us-east-1.order.events.v1",
+        "partitions": 48,
+        "replicas": 3,
+        "throughputPerPartition": 3200,
+        "acknowledgementLatencyMs": 6,
+        "retentionHours": 72
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "checkout-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "internal",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["OrderCreatedEvent"],
+        "allowedWriterIds": ["us-order-db"],
+        "consistencyModel": "eventual",
+        "conflictResolution": "merge",
+        "transactionBoundary": "Append-only regional order events keyed by orderId."
+      }
+    },
+    {
+      "id": "us-payment-queue",
+      "type": "rabbitmq.queue",
+      "position": {
+        "x": 1680,
+        "y": -220
+      },
+      "config": {
+        "exchangeType": "topic",
+        "queueName": "us-east-1.payment.authorize",
+        "durable": true,
+        "maxQueueSize": 1800000,
+        "messageTtlMs": 900000,
+        "retryCount": 5,
+        "retryDelayMs": 3000,
+        "deadLetterQueue": true,
+        "prefetch": 200,
+        "partitions": 24,
+        "consumerGroup": "us-east-1-payment-workers",
+        "publisherConfirmLatencyMs": 3,
+        "acknowledgementLatencyMs": 3,
+        "persistenceLatencyMs": 5,
+        "brokerMaxThroughputPerSecond": 42000,
+        "maxThroughputPerPartition": 2600,
+        "brokerStorageMb": 262144,
+        "bandwidthMbps": 20000,
+        "deadLetterMaxSize": 400000,
+        "orderingRequired": false
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "payments-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "regulated",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["PaymentAuthorizationCommand"],
+        "allowedWriterIds": ["us-order-events"],
+        "consistencyModel": "eventual",
+        "conflictResolution": "merge",
+        "transactionBoundary": "Durable payment authorization work queue."
+      }
+    },
+    {
+      "id": "us-payment-worker",
+      "type": "worker",
+      "position": {
+        "x": 1640,
+        "y": -220
+      },
+      "config": {
+        "workerName": "us-east-1-payment-authorizer",
+        "concurrency": 240,
+        "replicas": 22,
+        "minReplicas": 12,
+        "maxReplicas": 90,
+        "autoscalingEnabled": true,
+        "scaleUpUtilizationPercent": 62,
+        "scalingDelaySeconds": 20,
+        "scaleDownDelaySeconds": 120,
+        "coldStartSeconds": 8,
+        "cpuLimitCores": 16,
+        "memoryLimitMb": 32768,
+        "maxInFlight": 12000,
+        "timeoutMs": 5000,
+        "drainTimeSeconds": 30,
+        "averageProcessingMs": 75,
+        "processingJitterPercent": 30,
+        "cpuCostPerJob": 0.0018,
+        "memoryMbPerJob": 32,
+        "ackMode": "manual",
+        "failureRate": 0.006,
+        "retryCount": 4,
+        "retryBackoffMs": 500,
+        "retryMaxBackoffMs": 10000,
+        "retryJitterPercent": 25,
+        "failureJitterPercent": 15
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "payments-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "regulated",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "us-payment-circuit",
+      "type": "resilience.circuit-breaker",
+      "position": {
+        "x": 1970,
+        "y": -220
+      },
+      "config": {
+        "observedFailurePercent": 2,
+        "failureThresholdPercent": 45,
+        "openSeconds": 45,
+        "halfOpenRequests": 25,
+        "averageLatencyMs": 1
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "payments-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "regulated",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "us-payment-provider",
+      "type": "external.api",
+      "position": {
+        "x": 2310,
+        "y": -220
+      },
+      "config": {
+        "providerName": "Acquirer-us-east-1",
+        "averageLatencyMs": 280,
+        "latencyJitterPercent": 45,
+        "timeoutMs": 1300,
+        "rateLimitPerSecond": 9000,
+        "rateLimitWindowSeconds": 1,
+        "rateLimitQuota": 9000,
+        "failureRate": 0.005,
+        "retryCount": 2,
+        "circuitBreakerEnabled": true,
+        "circuitFailureThresholdPercent": 45,
+        "circuitOpenSeconds": 45,
+        "recoverySuccessThreshold": 12,
+        "bulkheadMaxConcurrent": 2600
+      },
+      "boundaryId": "trust-external-providers",
+      "responsibility": {
+        "owner": "vendor-management",
+        "deploymentRegion": "us-east-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "regulated",
+        "implementationStatus": "planned",
+        "notes": "US East acquiring/payment authorization provider."
+      }
+    },
+    {
+      "id": "us-payment-dlq",
+      "type": "messaging.dead-letter-queue",
+      "position": {
+        "x": 1640,
+        "y": -20
+      },
+      "config": {
+        "maxMessages": 400000,
+        "writesPerSecond": 9000,
+        "retentionHours": 336,
+        "replayPerSecond": 500,
+        "averageLatencyMs": 5
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "payments-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "regulated",
+        "implementationStatus": "planned",
+        "notes": "Payment poison-message quarantine with explicit replay ownership."
+      },
+      "stateOwnership": {
+        "dataOwned": ["PaymentAuthorizationCommand"],
+        "allowedWriterIds": ["us-payment-queue"],
+        "consistencyModel": "eventual",
+        "conflictResolution": "manual",
+        "transactionBoundary": "Messages after retry exhaustion await operational replay."
+      }
+    },
+    {
+      "id": "us-notification-events",
+      "type": "stream.kafka-topic",
+      "position": {
+        "x": 2440,
+        "y": -220
+      },
+      "config": {
+        "topicName": "us-east-1.notification.commands.v1",
+        "partitions": 24,
+        "replicas": 3,
+        "throughputPerPartition": 2600,
+        "acknowledgementLatencyMs": 5,
+        "retentionHours": 48
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "notifications-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["NotificationCommand"],
+        "allowedWriterIds": ["us-payment-provider"],
+        "consistencyModel": "eventual",
+        "conflictResolution": "merge",
+        "transactionBoundary": "Append notification work by notificationId."
+      }
+    },
+    {
+      "id": "us-notification-worker",
+      "type": "worker",
+      "position": {
+        "x": 2460,
+        "y": -220
+      },
+      "config": {
+        "workerName": "us-east-1-notification-worker",
+        "concurrency": 320,
+        "replicas": 12,
+        "minReplicas": 6,
+        "maxReplicas": 60,
+        "autoscalingEnabled": true,
+        "scaleUpUtilizationPercent": 68,
+        "scalingDelaySeconds": 15,
+        "scaleDownDelaySeconds": 90,
+        "coldStartSeconds": 6,
+        "cpuLimitCores": 8,
+        "memoryLimitMb": 16384,
+        "maxInFlight": 12000,
+        "timeoutMs": 4000,
+        "drainTimeSeconds": 20,
+        "averageProcessingMs": 45,
+        "processingJitterPercent": 35,
+        "cpuCostPerJob": 0.0012,
+        "memoryMbPerJob": 20,
+        "ackMode": "manual",
+        "failureRate": 0.004,
+        "retryCount": 3,
+        "retryBackoffMs": 300,
+        "retryMaxBackoffMs": 5000,
+        "retryJitterPercent": 20,
+        "failureJitterPercent": 10
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "notifications-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "us-realtime-gateway",
+      "type": "websocket.gateway",
+      "position": {
+        "x": 2820,
+        "y": -220
+      },
+      "config": {
+        "connectedClients": 292500,
+        "rooms": 11250,
+        "averageMessageSizeBytes": 900,
+        "messagesPerSecond": 13500,
+        "broadcastMode": "direct",
+        "memoryPerConnectionKb": 42
+      },
+      "boundaryId": "region-us-east-1",
+      "responsibility": {
+        "owner": "notifications-team",
+        "deploymentRegion": "us-east-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "eu-rate-limiter",
+      "type": "resilience.rate-limiter",
+      "position": {
+        "x": -840,
+        "y": 140
+      },
+      "config": {
+        "strategy": "token-bucket",
+        "quota": 75000,
+        "windowSeconds": 1,
+        "burstCapacity": 26250,
+        "averageLatencyMs": 1
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "edge-platform",
+        "deploymentRegion": "eu-west-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "internal",
+        "implementationStatus": "planned",
+        "notes": "EU West ingress abuse and flash-sale surge limiter."
+      }
+    },
+    {
+      "id": "eu-traffic-router",
+      "type": "router.condition",
+      "position": {
+        "x": -520,
+        "y": 140
+      },
+      "config": {
+        "rules": [
+          {
+            "condition": "route == catalog-read",
+            "target": "eu-catalog-http"
+          },
+          {
+            "condition": "route == search",
+            "target": "eu-search-http"
+          },
+          {
+            "condition": "route == cart-mutation",
+            "target": "eu-cart-http"
+          },
+          {
+            "condition": "route == checkout",
+            "target": "eu-checkout-http"
+          }
+        ]
+      },
+      "routingPolicy": {
+        "mode": "weighted"
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "platform-sre",
+        "deploymentRegion": "eu-west-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "internal",
+        "implementationStatus": "planned",
+        "notes": "EU West product-domain request router."
+      }
+    },
+    {
+      "id": "eu-catalog-http",
+      "type": "http.endpoint",
+      "position": {
+        "x": -160,
+        "y": -160
+      },
+      "config": {
+        "method": "GET",
+        "path": "/api/eu-west-1/catalog/products",
+        "timeoutMs": 900,
+        "authRequired": false,
+        "maxRequestsPerSecond": 54000,
+        "averageLatencyMs": 18
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "catalog-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "public",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "eu-catalog-cache",
+      "type": "redis.cache",
+      "position": {
+        "x": 560,
+        "y": -160
+      },
+      "config": {
+        "operation": "read",
+        "keyPattern": "catalog:eu-west-1:{sku}",
+        "ttlSeconds": 90,
+        "hitRate": 0.88,
+        "averageReadMs": 2,
+        "averageWriteMs": 4,
+        "maxMemoryMb": 262144,
+        "itemSizeBytes": 3200,
+        "evictionPolicy": "allkeys-lfu"
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "catalog-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "public",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["ProductRecord"],
+        "allowedWriterIds": ["eu-catalog-http"],
+        "consistencyModel": "eventual",
+        "cacheInvalidation": "event-driven",
+        "freshnessToleranceMs": 3000,
+        "readConsumerIds": ["eu-catalog-http"]
+      }
+    },
+    {
+      "id": "eu-catalog-read-replica",
+      "type": "data.read-replica",
+      "position": {
+        "x": 930,
+        "y": -160
+      },
+      "config": {
+        "replicaCount": 24,
+        "readsPerReplicaSecond": 6500,
+        "averageReadMs": 14,
+        "replicationLagMs": 250,
+        "maxConnectionsPerReplica": 1200
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "catalog-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "public",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["ProductRecord"],
+        "allowedWriterIds": ["global-analytics-stream"],
+        "consistencyModel": "eventual",
+        "cacheInvalidation": "event-driven",
+        "freshnessToleranceMs": 3000,
+        "readConsumerIds": ["eu-catalog-cache", "eu-catalog-http"]
+      }
+    },
+    {
+      "id": "eu-search-http",
+      "type": "http.endpoint",
+      "position": {
+        "x": -160,
+        "y": 40
+      },
+      "config": {
+        "method": "GET",
+        "path": "/api/eu-west-1/search",
+        "timeoutMs": 1000,
+        "authRequired": false,
+        "maxRequestsPerSecond": 27000,
+        "averageLatencyMs": 24
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "search-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "public",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "eu-search-index",
+      "type": "data.search-engine",
+      "position": {
+        "x": 930,
+        "y": 40
+      },
+      "config": {
+        "shards": 48,
+        "replicas": 2,
+        "queriesPerShardSecond": 1100,
+        "averageQueryMs": 38,
+        "indexingPerSecond": 16000
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "search-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "public",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["ProductRecord"],
+        "allowedWriterIds": ["global-analytics-stream"],
+        "consistencyModel": "eventual",
+        "conflictResolution": "last-write-wins",
+        "freshnessToleranceMs": 5000,
+        "readConsumerIds": ["eu-search-http"]
+      }
+    },
+    {
+      "id": "eu-cart-http",
+      "type": "http.endpoint",
+      "position": {
+        "x": -160,
+        "y": 260
+      },
+      "config": {
+        "method": "POST",
+        "path": "/api/eu-west-1/cart/items",
+        "timeoutMs": 1400,
+        "authRequired": true,
+        "maxRequestsPerSecond": 25500,
+        "averageLatencyMs": 30
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "cart-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "eu-cart-cache",
+      "type": "redis.cache",
+      "position": {
+        "x": 560,
+        "y": 260
+      },
+      "config": {
+        "operation": "read-write",
+        "keyPattern": "cart:eu-west-1:{cartId}",
+        "ttlSeconds": 86400,
+        "hitRate": 0.81,
+        "averageReadMs": 2,
+        "averageWriteMs": 5,
+        "maxMemoryMb": 524288,
+        "itemSizeBytes": 4600,
+        "evictionPolicy": "volatile-ttl"
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "cart-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["CartMutationCommand", "CartState"],
+        "allowedWriterIds": ["eu-cart-http"],
+        "consistencyModel": "eventual",
+        "cacheInvalidation": "write-through",
+        "freshnessToleranceMs": 1000,
+        "readConsumerIds": ["eu-cart-http", "eu-checkout-http"]
+      }
+    },
+    {
+      "id": "eu-cart-db",
+      "type": "database",
+      "position": {
+        "x": 930,
+        "y": 260
+      },
+      "config": {
+        "databaseType": "dynamodb",
+        "operation": "update",
+        "averageQueryMs": 12,
+        "connectionPoolSize": 900,
+        "maxWritesPerSecond": 42000,
+        "maxReadsPerSecond": 85000,
+        "readPercentage": 25,
+        "cacheHitPercentage": 0,
+        "maxConnections": 1200,
+        "storageIops": 140000,
+        "iopsPerOperation": 2,
+        "contentionPercentage": 4,
+        "averageTransactionMs": 12,
+        "readReplicaCount": 2,
+        "replicationLagMs": 120,
+        "primaryAvailable": true,
+        "failoverSeconds": 35,
+        "documentSizeBytes": 4200,
+        "indexUsed": true
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "cart-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": true,
+        "sourceOfTruth": true,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["CartState"],
+        "allowedWriterIds": ["eu-cart-cache"],
+        "consistencyModel": "read-after-write",
+        "conflictResolution": "last-write-wins",
+        "transactionBoundary": "One cart mutation per cartId and cartMutationId.",
+        "readConsumerIds": ["eu-cart-cache", "eu-checkout-http"]
+      }
+    },
+    {
+      "id": "eu-checkout-http",
+      "type": "http.endpoint",
+      "position": {
+        "x": -160,
+        "y": 500
+      },
+      "config": {
+        "method": "POST",
+        "path": "/api/eu-west-1/checkout",
+        "timeoutMs": 1800,
+        "authRequired": true,
+        "maxRequestsPerSecond": 13500,
+        "averageLatencyMs": 36
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "checkout-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "eu-order-service",
+      "type": "function.service",
+      "position": {
+        "x": 210,
+        "y": 500
+      },
+      "config": {
+        "functionName": "eu-west-1-checkout-orchestrator",
+        "averageExecutionMs": 32,
+        "cpuCostPerRequest": 0.0016,
+        "memoryMbPerRequest": 18,
+        "failureRate": 0.002
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "checkout-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned",
+        "notes": "Validates cart, reserves inventory, and commits the order record."
+      }
+    },
+    {
+      "id": "eu-inventory-cache",
+      "type": "redis.cache",
+      "position": {
+        "x": 560,
+        "y": 500
+      },
+      "config": {
+        "operation": "read-write",
+        "keyPattern": "inventory:eu-west-1:{sku}",
+        "ttlSeconds": 8,
+        "hitRate": 0.72,
+        "averageReadMs": 2,
+        "averageWriteMs": 4,
+        "maxMemoryMb": 131072,
+        "itemSizeBytes": 1200,
+        "evictionPolicy": "volatile-ttl"
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "inventory-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "internal",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["InventoryRecord"],
+        "allowedWriterIds": ["eu-order-service"],
+        "consistencyModel": "eventual",
+        "cacheInvalidation": "ttl",
+        "freshnessToleranceMs": 800,
+        "readConsumerIds": ["eu-order-service"]
+      }
+    },
+    {
+      "id": "eu-inventory-db",
+      "type": "database",
+      "position": {
+        "x": 930,
+        "y": 500
+      },
+      "config": {
+        "databaseType": "cassandra",
+        "operation": "transaction",
+        "averageQueryMs": 18,
+        "connectionPoolSize": 700,
+        "maxWritesPerSecond": 26000,
+        "maxReadsPerSecond": 50000,
+        "readPercentage": 35,
+        "cacheHitPercentage": 0,
+        "maxConnections": 900,
+        "storageIops": 110000,
+        "iopsPerOperation": 3,
+        "contentionPercentage": 12,
+        "averageTransactionMs": 22,
+        "readReplicaCount": 2,
+        "replicationLagMs": 450,
+        "primaryAvailable": true,
+        "failoverSeconds": 45,
+        "documentSizeBytes": 1300,
+        "indexUsed": true
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "inventory-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": true,
+        "sourceOfTruth": true,
+        "dataClassification": "internal",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["InventoryRecord"],
+        "allowedWriterIds": ["eu-inventory-cache"],
+        "consistencyModel": "strong",
+        "conflictResolution": "single-writer",
+        "transactionBoundary": "Atomic reservation per sku and orderId.",
+        "readConsumerIds": ["eu-inventory-cache", "eu-order-service"]
+      }
+    },
+    {
+      "id": "eu-order-db-proxy",
+      "type": "data.database-proxy",
+      "position": {
+        "x": 560,
+        "y": 720
+      },
+      "config": {
+        "clientConnections": 45000,
+        "databaseConnections": 1800,
+        "multiplexingRatio": 24,
+        "averageLatencyMs": 3
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "checkout-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": [],
+        "allowedWriterIds": ["eu-inventory-db"],
+        "consistencyModel": "strong",
+        "conflictResolution": "single-writer",
+        "transactionBoundary": "Connection pooling only; no durable state."
+      }
+    },
+    {
+      "id": "eu-order-db",
+      "type": "database",
+      "position": {
+        "x": 930,
+        "y": 720
+      },
+      "config": {
+        "databaseType": "postgresql",
+        "operation": "transaction",
+        "averageQueryMs": 20,
+        "connectionPoolSize": 1500,
+        "maxWritesPerSecond": 18000,
+        "maxReadsPerSecond": 42000,
+        "readPercentage": 20,
+        "cacheHitPercentage": 0,
+        "maxConnections": 1800,
+        "storageIops": 140000,
+        "iopsPerOperation": 4,
+        "contentionPercentage": 8,
+        "averageTransactionMs": 26,
+        "readReplicaCount": 3,
+        "replicationLagMs": 180,
+        "primaryAvailable": true,
+        "failoverSeconds": 40,
+        "documentSizeBytes": 2600,
+        "indexUsed": true
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "checkout-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": true,
+        "sourceOfTruth": true,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["OrderRecord"],
+        "allowedWriterIds": ["eu-order-db-proxy"],
+        "consistencyModel": "strong",
+        "conflictResolution": "merge",
+        "transactionBoundary": "One order commit per orderId; globally unique id generated before write.",
+        "readConsumerIds": ["eu-order-service", "eu-payment-worker"]
+      }
+    },
+    {
+      "id": "eu-order-events",
+      "type": "stream.kafka-topic",
+      "position": {
+        "x": 1300,
+        "y": 720
+      },
+      "config": {
+        "topicName": "eu-west-1.order.events.v1",
+        "partitions": 48,
+        "replicas": 3,
+        "throughputPerPartition": 3200,
+        "acknowledgementLatencyMs": 6,
+        "retentionHours": 72
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "checkout-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "internal",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["OrderCreatedEvent"],
+        "allowedWriterIds": ["eu-order-db"],
+        "consistencyModel": "eventual",
+        "conflictResolution": "merge",
+        "transactionBoundary": "Append-only regional order events keyed by orderId."
+      }
+    },
+    {
+      "id": "eu-payment-queue",
+      "type": "rabbitmq.queue",
+      "position": {
+        "x": 1680,
+        "y": 640
+      },
+      "config": {
+        "exchangeType": "topic",
+        "queueName": "eu-west-1.payment.authorize",
+        "durable": true,
+        "maxQueueSize": 1800000,
+        "messageTtlMs": 900000,
+        "retryCount": 5,
+        "retryDelayMs": 3000,
+        "deadLetterQueue": true,
+        "prefetch": 200,
+        "partitions": 24,
+        "consumerGroup": "eu-west-1-payment-workers",
+        "publisherConfirmLatencyMs": 3,
+        "acknowledgementLatencyMs": 3,
+        "persistenceLatencyMs": 5,
+        "brokerMaxThroughputPerSecond": 42000,
+        "maxThroughputPerPartition": 2600,
+        "brokerStorageMb": 262144,
+        "bandwidthMbps": 20000,
+        "deadLetterMaxSize": 400000,
+        "orderingRequired": false
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "payments-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "regulated",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["PaymentAuthorizationCommand"],
+        "allowedWriterIds": ["eu-order-events"],
+        "consistencyModel": "eventual",
+        "conflictResolution": "merge",
+        "transactionBoundary": "Durable payment authorization work queue."
+      }
+    },
+    {
+      "id": "eu-payment-worker",
+      "type": "worker",
+      "position": {
+        "x": 1640,
+        "y": 640
+      },
+      "config": {
+        "workerName": "eu-west-1-payment-authorizer",
+        "concurrency": 240,
+        "replicas": 22,
+        "minReplicas": 12,
+        "maxReplicas": 90,
+        "autoscalingEnabled": true,
+        "scaleUpUtilizationPercent": 62,
+        "scalingDelaySeconds": 20,
+        "scaleDownDelaySeconds": 120,
+        "coldStartSeconds": 8,
+        "cpuLimitCores": 16,
+        "memoryLimitMb": 32768,
+        "maxInFlight": 12000,
+        "timeoutMs": 5000,
+        "drainTimeSeconds": 30,
+        "averageProcessingMs": 75,
+        "processingJitterPercent": 30,
+        "cpuCostPerJob": 0.0018,
+        "memoryMbPerJob": 32,
+        "ackMode": "manual",
+        "failureRate": 0.006,
+        "retryCount": 4,
+        "retryBackoffMs": 500,
+        "retryMaxBackoffMs": 10000,
+        "retryJitterPercent": 25,
+        "failureJitterPercent": 15
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "payments-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "regulated",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "eu-payment-circuit",
+      "type": "resilience.circuit-breaker",
+      "position": {
+        "x": 1970,
+        "y": 640
+      },
+      "config": {
+        "observedFailurePercent": 2,
+        "failureThresholdPercent": 45,
+        "openSeconds": 45,
+        "halfOpenRequests": 25,
+        "averageLatencyMs": 1
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "payments-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "regulated",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "eu-payment-provider",
+      "type": "external.api",
+      "position": {
+        "x": 2310,
+        "y": 640
+      },
+      "config": {
+        "providerName": "Acquirer-eu-west-1",
+        "averageLatencyMs": 320,
+        "latencyJitterPercent": 45,
+        "timeoutMs": 1300,
+        "rateLimitPerSecond": 7200,
+        "rateLimitWindowSeconds": 1,
+        "rateLimitQuota": 7200,
+        "failureRate": 0.005,
+        "retryCount": 2,
+        "circuitBreakerEnabled": true,
+        "circuitFailureThresholdPercent": 45,
+        "circuitOpenSeconds": 45,
+        "recoverySuccessThreshold": 12,
+        "bulkheadMaxConcurrent": 2200
+      },
+      "boundaryId": "trust-external-providers",
+      "responsibility": {
+        "owner": "vendor-management",
+        "deploymentRegion": "eu-west-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "regulated",
+        "implementationStatus": "planned",
+        "notes": "EU West acquiring/payment authorization provider."
+      }
+    },
+    {
+      "id": "eu-payment-dlq",
+      "type": "messaging.dead-letter-queue",
+      "position": {
+        "x": 1640,
+        "y": 840
+      },
+      "config": {
+        "maxMessages": 400000,
+        "writesPerSecond": 9000,
+        "retentionHours": 336,
+        "replayPerSecond": 500,
+        "averageLatencyMs": 5
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "payments-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "regulated",
+        "implementationStatus": "planned",
+        "notes": "Payment poison-message quarantine with explicit replay ownership."
+      },
+      "stateOwnership": {
+        "dataOwned": ["PaymentAuthorizationCommand"],
+        "allowedWriterIds": ["eu-payment-queue"],
+        "consistencyModel": "eventual",
+        "conflictResolution": "manual",
+        "transactionBoundary": "Messages after retry exhaustion await operational replay."
+      }
+    },
+    {
+      "id": "eu-notification-events",
+      "type": "stream.kafka-topic",
+      "position": {
+        "x": 2440,
+        "y": 640
+      },
+      "config": {
+        "topicName": "eu-west-1.notification.commands.v1",
+        "partitions": 24,
+        "replicas": 3,
+        "throughputPerPartition": 2600,
+        "acknowledgementLatencyMs": 5,
+        "retentionHours": 48
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "notifications-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["NotificationCommand"],
+        "allowedWriterIds": ["eu-payment-provider"],
+        "consistencyModel": "eventual",
+        "conflictResolution": "merge",
+        "transactionBoundary": "Append notification work by notificationId."
+      }
+    },
+    {
+      "id": "eu-notification-worker",
+      "type": "worker",
+      "position": {
+        "x": 2460,
+        "y": 640
+      },
+      "config": {
+        "workerName": "eu-west-1-notification-worker",
+        "concurrency": 320,
+        "replicas": 12,
+        "minReplicas": 6,
+        "maxReplicas": 60,
+        "autoscalingEnabled": true,
+        "scaleUpUtilizationPercent": 68,
+        "scalingDelaySeconds": 15,
+        "scaleDownDelaySeconds": 90,
+        "coldStartSeconds": 6,
+        "cpuLimitCores": 8,
+        "memoryLimitMb": 16384,
+        "maxInFlight": 12000,
+        "timeoutMs": 4000,
+        "drainTimeSeconds": 20,
+        "averageProcessingMs": 45,
+        "processingJitterPercent": 35,
+        "cpuCostPerJob": 0.0012,
+        "memoryMbPerJob": 20,
+        "ackMode": "manual",
+        "failureRate": 0.004,
+        "retryCount": 3,
+        "retryBackoffMs": 300,
+        "retryMaxBackoffMs": 5000,
+        "retryJitterPercent": 20,
+        "failureJitterPercent": 10
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "notifications-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "eu-realtime-gateway",
+      "type": "websocket.gateway",
+      "position": {
+        "x": 2820,
+        "y": 640
+      },
+      "config": {
+        "connectedClients": 227500,
+        "rooms": 8750,
+        "averageMessageSizeBytes": 900,
+        "messagesPerSecond": 10500,
+        "broadcastMode": "direct",
+        "memoryPerConnectionKb": 42
+      },
+      "boundaryId": "region-eu-west-1",
+      "responsibility": {
+        "owner": "notifications-team",
+        "deploymentRegion": "eu-west-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "ap-rate-limiter",
+      "type": "resilience.rate-limiter",
+      "position": {
+        "x": -840,
+        "y": 1000
+      },
+      "config": {
+        "strategy": "token-bucket",
+        "quota": 52000,
+        "windowSeconds": 1,
+        "burstCapacity": 18200,
+        "averageLatencyMs": 1
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "edge-platform",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "internal",
+        "implementationStatus": "planned",
+        "notes": "AP Southeast ingress abuse and flash-sale surge limiter."
+      }
+    },
+    {
+      "id": "ap-traffic-router",
+      "type": "router.condition",
+      "position": {
+        "x": -520,
+        "y": 1000
+      },
+      "config": {
+        "rules": [
+          {
+            "condition": "route == catalog-read",
+            "target": "ap-catalog-http"
+          },
+          {
+            "condition": "route == search",
+            "target": "ap-search-http"
+          },
+          {
+            "condition": "route == cart-mutation",
+            "target": "ap-cart-http"
+          },
+          {
+            "condition": "route == checkout",
+            "target": "ap-checkout-http"
+          }
+        ]
+      },
+      "routingPolicy": {
+        "mode": "weighted"
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "platform-sre",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "internal",
+        "implementationStatus": "planned",
+        "notes": "AP Southeast product-domain request router."
+      }
+    },
+    {
+      "id": "ap-catalog-http",
+      "type": "http.endpoint",
+      "position": {
+        "x": -160,
+        "y": 700
+      },
+      "config": {
+        "method": "GET",
+        "path": "/api/ap-southeast-1/catalog/products",
+        "timeoutMs": 900,
+        "authRequired": false,
+        "maxRequestsPerSecond": 37440,
+        "averageLatencyMs": 18
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "catalog-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "public",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "ap-catalog-cache",
+      "type": "redis.cache",
+      "position": {
+        "x": 560,
+        "y": 700
+      },
+      "config": {
+        "operation": "read",
+        "keyPattern": "catalog:ap-southeast-1:{sku}",
+        "ttlSeconds": 90,
+        "hitRate": 0.88,
+        "averageReadMs": 2,
+        "averageWriteMs": 4,
+        "maxMemoryMb": 262144,
+        "itemSizeBytes": 3200,
+        "evictionPolicy": "allkeys-lfu"
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "catalog-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "public",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["ProductRecord"],
+        "allowedWriterIds": ["ap-catalog-http"],
+        "consistencyModel": "eventual",
+        "cacheInvalidation": "event-driven",
+        "freshnessToleranceMs": 3000,
+        "readConsumerIds": ["ap-catalog-http"]
+      }
+    },
+    {
+      "id": "ap-catalog-read-replica",
+      "type": "data.read-replica",
+      "position": {
+        "x": 930,
+        "y": 700
+      },
+      "config": {
+        "replicaCount": 24,
+        "readsPerReplicaSecond": 6500,
+        "averageReadMs": 14,
+        "replicationLagMs": 250,
+        "maxConnectionsPerReplica": 1200
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "catalog-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "public",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["ProductRecord"],
+        "allowedWriterIds": ["global-analytics-stream"],
+        "consistencyModel": "eventual",
+        "cacheInvalidation": "event-driven",
+        "freshnessToleranceMs": 3000,
+        "readConsumerIds": ["ap-catalog-cache", "ap-catalog-http"]
+      }
+    },
+    {
+      "id": "ap-search-http",
+      "type": "http.endpoint",
+      "position": {
+        "x": -160,
+        "y": 900
+      },
+      "config": {
+        "method": "GET",
+        "path": "/api/ap-southeast-1/search",
+        "timeoutMs": 1000,
+        "authRequired": false,
+        "maxRequestsPerSecond": 18720,
+        "averageLatencyMs": 24
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "search-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "public",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "ap-search-index",
+      "type": "data.search-engine",
+      "position": {
+        "x": 930,
+        "y": 900
+      },
+      "config": {
+        "shards": 48,
+        "replicas": 2,
+        "queriesPerShardSecond": 1100,
+        "averageQueryMs": 38,
+        "indexingPerSecond": 16000
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "search-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "public",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["ProductRecord"],
+        "allowedWriterIds": ["global-analytics-stream"],
+        "consistencyModel": "eventual",
+        "conflictResolution": "last-write-wins",
+        "freshnessToleranceMs": 5000,
+        "readConsumerIds": ["ap-search-http"]
+      }
+    },
+    {
+      "id": "ap-cart-http",
+      "type": "http.endpoint",
+      "position": {
+        "x": -160,
+        "y": 1120
+      },
+      "config": {
+        "method": "POST",
+        "path": "/api/ap-southeast-1/cart/items",
+        "timeoutMs": 1400,
+        "authRequired": true,
+        "maxRequestsPerSecond": 17680,
+        "averageLatencyMs": 30
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "cart-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "ap-cart-cache",
+      "type": "redis.cache",
+      "position": {
+        "x": 560,
+        "y": 1120
+      },
+      "config": {
+        "operation": "read-write",
+        "keyPattern": "cart:ap-southeast-1:{cartId}",
+        "ttlSeconds": 86400,
+        "hitRate": 0.81,
+        "averageReadMs": 2,
+        "averageWriteMs": 5,
+        "maxMemoryMb": 524288,
+        "itemSizeBytes": 4600,
+        "evictionPolicy": "volatile-ttl"
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "cart-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["CartMutationCommand", "CartState"],
+        "allowedWriterIds": ["ap-cart-http"],
+        "consistencyModel": "eventual",
+        "cacheInvalidation": "write-through",
+        "freshnessToleranceMs": 1000,
+        "readConsumerIds": ["ap-cart-http", "ap-checkout-http"]
+      }
+    },
+    {
+      "id": "ap-cart-db",
+      "type": "database",
+      "position": {
+        "x": 930,
+        "y": 1120
+      },
+      "config": {
+        "databaseType": "dynamodb",
+        "operation": "update",
+        "averageQueryMs": 12,
+        "connectionPoolSize": 900,
+        "maxWritesPerSecond": 42000,
+        "maxReadsPerSecond": 85000,
+        "readPercentage": 25,
+        "cacheHitPercentage": 0,
+        "maxConnections": 1200,
+        "storageIops": 140000,
+        "iopsPerOperation": 2,
+        "contentionPercentage": 4,
+        "averageTransactionMs": 12,
+        "readReplicaCount": 2,
+        "replicationLagMs": 120,
+        "primaryAvailable": true,
+        "failoverSeconds": 35,
+        "documentSizeBytes": 4200,
+        "indexUsed": true
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "cart-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": true,
+        "sourceOfTruth": true,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["CartState"],
+        "allowedWriterIds": ["ap-cart-cache"],
+        "consistencyModel": "read-after-write",
+        "conflictResolution": "last-write-wins",
+        "transactionBoundary": "One cart mutation per cartId and cartMutationId.",
+        "readConsumerIds": ["ap-cart-cache", "ap-checkout-http"]
+      }
+    },
+    {
+      "id": "ap-checkout-http",
+      "type": "http.endpoint",
+      "position": {
+        "x": -160,
+        "y": 1360
+      },
+      "config": {
+        "method": "POST",
+        "path": "/api/ap-southeast-1/checkout",
+        "timeoutMs": 1800,
+        "authRequired": true,
+        "maxRequestsPerSecond": 9360,
+        "averageLatencyMs": 36
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "checkout-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "ap-order-service",
+      "type": "function.service",
+      "position": {
+        "x": 210,
+        "y": 1360
+      },
+      "config": {
+        "functionName": "ap-southeast-1-checkout-orchestrator",
+        "averageExecutionMs": 32,
+        "cpuCostPerRequest": 0.0016,
+        "memoryMbPerRequest": 18,
+        "failureRate": 0.002
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "checkout-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned",
+        "notes": "Validates cart, reserves inventory, and commits the order record."
+      }
+    },
+    {
+      "id": "ap-inventory-cache",
+      "type": "redis.cache",
+      "position": {
+        "x": 560,
+        "y": 1360
+      },
+      "config": {
+        "operation": "read-write",
+        "keyPattern": "inventory:ap-southeast-1:{sku}",
+        "ttlSeconds": 8,
+        "hitRate": 0.72,
+        "averageReadMs": 2,
+        "averageWriteMs": 4,
+        "maxMemoryMb": 131072,
+        "itemSizeBytes": 1200,
+        "evictionPolicy": "volatile-ttl"
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "inventory-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "internal",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["InventoryRecord"],
+        "allowedWriterIds": ["ap-order-service"],
+        "consistencyModel": "eventual",
+        "cacheInvalidation": "ttl",
+        "freshnessToleranceMs": 800,
+        "readConsumerIds": ["ap-order-service"]
+      }
+    },
+    {
+      "id": "ap-inventory-db",
+      "type": "database",
+      "position": {
+        "x": 930,
+        "y": 1360
+      },
+      "config": {
+        "databaseType": "cassandra",
+        "operation": "transaction",
+        "averageQueryMs": 18,
+        "connectionPoolSize": 700,
+        "maxWritesPerSecond": 26000,
+        "maxReadsPerSecond": 50000,
+        "readPercentage": 35,
+        "cacheHitPercentage": 0,
+        "maxConnections": 900,
+        "storageIops": 110000,
+        "iopsPerOperation": 3,
+        "contentionPercentage": 12,
+        "averageTransactionMs": 22,
+        "readReplicaCount": 2,
+        "replicationLagMs": 450,
+        "primaryAvailable": true,
+        "failoverSeconds": 45,
+        "documentSizeBytes": 1300,
+        "indexUsed": true
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "inventory-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": true,
+        "sourceOfTruth": true,
+        "dataClassification": "internal",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["InventoryRecord"],
+        "allowedWriterIds": ["ap-inventory-cache"],
+        "consistencyModel": "strong",
+        "conflictResolution": "single-writer",
+        "transactionBoundary": "Atomic reservation per sku and orderId.",
+        "readConsumerIds": ["ap-inventory-cache", "ap-order-service"]
+      }
+    },
+    {
+      "id": "ap-order-db-proxy",
+      "type": "data.database-proxy",
+      "position": {
+        "x": 560,
+        "y": 1580
+      },
+      "config": {
+        "clientConnections": 45000,
+        "databaseConnections": 1800,
+        "multiplexingRatio": 24,
+        "averageLatencyMs": 3
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "checkout-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": [],
+        "allowedWriterIds": ["ap-inventory-db"],
+        "consistencyModel": "strong",
+        "conflictResolution": "single-writer",
+        "transactionBoundary": "Connection pooling only; no durable state."
+      }
+    },
+    {
+      "id": "ap-order-db",
+      "type": "database",
+      "position": {
+        "x": 930,
+        "y": 1580
+      },
+      "config": {
+        "databaseType": "postgresql",
+        "operation": "transaction",
+        "averageQueryMs": 20,
+        "connectionPoolSize": 1500,
+        "maxWritesPerSecond": 18000,
+        "maxReadsPerSecond": 42000,
+        "readPercentage": 20,
+        "cacheHitPercentage": 0,
+        "maxConnections": 1800,
+        "storageIops": 140000,
+        "iopsPerOperation": 4,
+        "contentionPercentage": 8,
+        "averageTransactionMs": 26,
+        "readReplicaCount": 3,
+        "replicationLagMs": 180,
+        "primaryAvailable": true,
+        "failoverSeconds": 40,
+        "documentSizeBytes": 2600,
+        "indexUsed": true
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "checkout-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": true,
+        "sourceOfTruth": true,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["OrderRecord"],
+        "allowedWriterIds": ["ap-order-db-proxy"],
+        "consistencyModel": "strong",
+        "conflictResolution": "merge",
+        "transactionBoundary": "One order commit per orderId; globally unique id generated before write.",
+        "readConsumerIds": ["ap-order-service", "ap-payment-worker"]
+      }
+    },
+    {
+      "id": "ap-order-events",
+      "type": "stream.kafka-topic",
+      "position": {
+        "x": 1300,
+        "y": 1580
+      },
+      "config": {
+        "topicName": "ap-southeast-1.order.events.v1",
+        "partitions": 48,
+        "replicas": 3,
+        "throughputPerPartition": 3200,
+        "acknowledgementLatencyMs": 6,
+        "retentionHours": 72
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "checkout-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "internal",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["OrderCreatedEvent"],
+        "allowedWriterIds": ["ap-order-db"],
+        "consistencyModel": "eventual",
+        "conflictResolution": "merge",
+        "transactionBoundary": "Append-only regional order events keyed by orderId."
+      }
+    },
+    {
+      "id": "ap-payment-queue",
+      "type": "rabbitmq.queue",
+      "position": {
+        "x": 1680,
+        "y": 1500
+      },
+      "config": {
+        "exchangeType": "topic",
+        "queueName": "ap-southeast-1.payment.authorize",
+        "durable": true,
+        "maxQueueSize": 1800000,
+        "messageTtlMs": 900000,
+        "retryCount": 5,
+        "retryDelayMs": 3000,
+        "deadLetterQueue": true,
+        "prefetch": 200,
+        "partitions": 24,
+        "consumerGroup": "ap-southeast-1-payment-workers",
+        "publisherConfirmLatencyMs": 3,
+        "acknowledgementLatencyMs": 3,
+        "persistenceLatencyMs": 5,
+        "brokerMaxThroughputPerSecond": 42000,
+        "maxThroughputPerPartition": 2600,
+        "brokerStorageMb": 262144,
+        "bandwidthMbps": 20000,
+        "deadLetterMaxSize": 400000,
+        "orderingRequired": false
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "payments-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "regulated",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["PaymentAuthorizationCommand"],
+        "allowedWriterIds": ["ap-order-events"],
+        "consistencyModel": "eventual",
+        "conflictResolution": "merge",
+        "transactionBoundary": "Durable payment authorization work queue."
+      }
+    },
+    {
+      "id": "ap-payment-worker",
+      "type": "worker",
+      "position": {
+        "x": 1640,
+        "y": 1500
+      },
+      "config": {
+        "workerName": "ap-southeast-1-payment-authorizer",
+        "concurrency": 240,
+        "replicas": 22,
+        "minReplicas": 12,
+        "maxReplicas": 90,
+        "autoscalingEnabled": true,
+        "scaleUpUtilizationPercent": 62,
+        "scalingDelaySeconds": 20,
+        "scaleDownDelaySeconds": 120,
+        "coldStartSeconds": 8,
+        "cpuLimitCores": 16,
+        "memoryLimitMb": 32768,
+        "maxInFlight": 12000,
+        "timeoutMs": 5000,
+        "drainTimeSeconds": 30,
+        "averageProcessingMs": 75,
+        "processingJitterPercent": 30,
+        "cpuCostPerJob": 0.0018,
+        "memoryMbPerJob": 32,
+        "ackMode": "manual",
+        "failureRate": 0.006,
+        "retryCount": 4,
+        "retryBackoffMs": 500,
+        "retryMaxBackoffMs": 10000,
+        "retryJitterPercent": 25,
+        "failureJitterPercent": 15
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "payments-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "regulated",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "ap-payment-circuit",
+      "type": "resilience.circuit-breaker",
+      "position": {
+        "x": 1970,
+        "y": 1500
+      },
+      "config": {
+        "observedFailurePercent": 2,
+        "failureThresholdPercent": 45,
+        "openSeconds": 45,
+        "halfOpenRequests": 25,
+        "averageLatencyMs": 1
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "payments-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "regulated",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "ap-payment-provider",
+      "type": "external.api",
+      "position": {
+        "x": 2310,
+        "y": 1500
+      },
+      "config": {
+        "providerName": "Acquirer-ap-southeast-1",
+        "averageLatencyMs": 380,
+        "latencyJitterPercent": 45,
+        "timeoutMs": 1300,
+        "rateLimitPerSecond": 4400,
+        "rateLimitWindowSeconds": 1,
+        "rateLimitQuota": 4400,
+        "failureRate": 0.005,
+        "retryCount": 2,
+        "circuitBreakerEnabled": true,
+        "circuitFailureThresholdPercent": 45,
+        "circuitOpenSeconds": 45,
+        "recoverySuccessThreshold": 12,
+        "bulkheadMaxConcurrent": 1400
+      },
+      "boundaryId": "trust-external-providers",
+      "responsibility": {
+        "owner": "vendor-management",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "regulated",
+        "implementationStatus": "planned",
+        "notes": "AP Southeast acquiring/payment authorization provider."
+      }
+    },
+    {
+      "id": "ap-payment-dlq",
+      "type": "messaging.dead-letter-queue",
+      "position": {
+        "x": 1640,
+        "y": 1700
+      },
+      "config": {
+        "maxMessages": 400000,
+        "writesPerSecond": 9000,
+        "retentionHours": 336,
+        "replayPerSecond": 500,
+        "averageLatencyMs": 5
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "payments-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "regulated",
+        "implementationStatus": "planned",
+        "notes": "Payment poison-message quarantine with explicit replay ownership."
+      },
+      "stateOwnership": {
+        "dataOwned": ["PaymentAuthorizationCommand"],
+        "allowedWriterIds": ["ap-payment-queue"],
+        "consistencyModel": "eventual",
+        "conflictResolution": "manual",
+        "transactionBoundary": "Messages after retry exhaustion await operational replay."
+      }
+    },
+    {
+      "id": "ap-notification-events",
+      "type": "stream.kafka-topic",
+      "position": {
+        "x": 2440,
+        "y": 1500
+      },
+      "config": {
+        "topicName": "ap-southeast-1.notification.commands.v1",
+        "partitions": 24,
+        "replicas": 3,
+        "throughputPerPartition": 2600,
+        "acknowledgementLatencyMs": 5,
+        "retentionHours": 48
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "notifications-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": true,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      },
+      "stateOwnership": {
+        "dataOwned": ["NotificationCommand"],
+        "allowedWriterIds": ["ap-payment-provider"],
+        "consistencyModel": "eventual",
+        "conflictResolution": "merge",
+        "transactionBoundary": "Append notification work by notificationId."
+      }
+    },
+    {
+      "id": "ap-notification-worker",
+      "type": "worker",
+      "position": {
+        "x": 2460,
+        "y": 1500
+      },
+      "config": {
+        "workerName": "ap-southeast-1-notification-worker",
+        "concurrency": 320,
+        "replicas": 12,
+        "minReplicas": 6,
+        "maxReplicas": 60,
+        "autoscalingEnabled": true,
+        "scaleUpUtilizationPercent": 68,
+        "scalingDelaySeconds": 15,
+        "scaleDownDelaySeconds": 90,
+        "coldStartSeconds": 6,
+        "cpuLimitCores": 8,
+        "memoryLimitMb": 16384,
+        "maxInFlight": 12000,
+        "timeoutMs": 4000,
+        "drainTimeSeconds": 20,
+        "averageProcessingMs": 45,
+        "processingJitterPercent": 35,
+        "cpuCostPerJob": 0.0012,
+        "memoryMbPerJob": 20,
+        "ackMode": "manual",
+        "failureRate": 0.004,
+        "retryCount": 3,
+        "retryBackoffMs": 300,
+        "retryMaxBackoffMs": 5000,
+        "retryJitterPercent": 20,
+        "failureJitterPercent": 10
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "notifications-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      }
+    },
+    {
+      "id": "ap-realtime-gateway",
+      "type": "websocket.gateway",
+      "position": {
+        "x": 2820,
+        "y": 1500
+      },
+      "config": {
+        "connectedClients": 130000,
+        "rooms": 5000,
+        "averageMessageSizeBytes": 900,
+        "messagesPerSecond": 6000,
+        "broadcastMode": "direct",
+        "memoryPerConnectionKb": 42
+      },
+      "boundaryId": "region-ap-southeast-1",
+      "responsibility": {
+        "owner": "notifications-team",
+        "deploymentRegion": "ap-southeast-1",
+        "stateful": false,
+        "sourceOfTruth": false,
+        "dataClassification": "confidential",
+        "implementationStatus": "planned"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-global-source-to-cdn",
+      "fromNodeId": "global-shopper-traffic",
+      "toNodeId": "global-cdn-edge-cache",
+      "dataType": "ShopperRequest",
+      "interactionType": "request-response",
+      "timeoutMs": 1200,
+      "responseDataType": "ShopperResponse",
+      "protection": "tls",
+      "network": {
+        "sourceRegion": "global-internet",
+        "targetRegion": "global-edge",
+        "bandwidthMbps": 100000,
+        "baseLatencyMs": 12,
+        "tlsHandshakeMs": 18,
+        "connectionReusePercent": 96,
+        "outagePercent": 0.01
+      }
+    },
+    {
+      "id": "edge-global-cdn-to-manager",
+      "fromNodeId": "global-cdn-edge-cache",
+      "toNodeId": "global-traffic-manager",
+      "dataType": "ShopperRequest",
+      "interactionType": "request-response",
+      "timeoutMs": 1200,
+      "responseDataType": "ShopperResponse",
+      "protection": "tls",
+      "network": {
+        "sourceRegion": "global-edge",
+        "targetRegion": "global-edge",
+        "bandwidthMbps": 100000,
+        "baseLatencyMs": 4,
+        "tlsHandshakeMs": 18,
+        "connectionReusePercent": 96,
+        "outagePercent": 0.01
+      }
+    },
+    {
+      "id": "edge-global-to-us-rate",
+      "fromNodeId": "global-traffic-manager",
+      "toNodeId": "us-rate-limiter",
+      "dataType": "ShopperRequest",
+      "interactionType": "request-response",
+      "timeoutMs": 1300,
+      "responseDataType": "ShopperResponse",
+      "trafficPercentage": 45,
+      "protection": "tls",
+      "network": {
+        "sourceRegion": "global-edge",
+        "targetRegion": "us-east-1",
+        "bandwidthMbps": 60000,
+        "baseLatencyMs": 28,
+        "tlsHandshakeMs": 18,
+        "connectionReusePercent": 96,
+        "outagePercent": 0.03
+      }
+    },
+    {
+      "id": "edge-us-rate-to-router",
+      "fromNodeId": "us-rate-limiter",
+      "toNodeId": "us-traffic-router",
+      "dataType": "ShopperRequest",
+      "interactionType": "request-response",
+      "timeoutMs": 1200,
+      "responseDataType": "ShopperResponse"
+    },
+    {
+      "id": "edge-us-router-to-catalog",
+      "fromNodeId": "us-traffic-router",
+      "toNodeId": "us-catalog-http",
+      "dataType": "CatalogReadRequest",
+      "interactionType": "request-response",
+      "timeoutMs": 900,
+      "responseDataType": "CatalogReadResponse",
+      "trafficPercentage": 50,
+      "condition": "catalog and product detail traffic"
+    },
+    {
+      "id": "edge-us-router-to-search",
+      "fromNodeId": "us-traffic-router",
+      "toNodeId": "us-search-http",
+      "dataType": "SearchRequest",
+      "interactionType": "request-response",
+      "timeoutMs": 950,
+      "responseDataType": "SearchResponse",
+      "trafficPercentage": 20,
+      "condition": "search traffic"
+    },
+    {
+      "id": "edge-us-router-to-cart",
+      "fromNodeId": "us-traffic-router",
+      "toNodeId": "us-cart-http",
+      "dataType": "CartMutationCommand",
+      "interactionType": "request-response",
+      "timeoutMs": 1300,
+      "responseDataType": "CartMutationResponse",
+      "trafficPercentage": 20,
+      "condition": "cart mutation traffic",
+      "deliveryPolicy": {
+        "guarantee": "effectively-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "shared-store"
+      }
+    },
+    {
+      "id": "edge-us-router-to-checkout",
+      "fromNodeId": "us-traffic-router",
+      "toNodeId": "us-checkout-http",
+      "dataType": "CheckoutCommand",
+      "interactionType": "request-response",
+      "timeoutMs": 1600,
+      "responseDataType": "OrderAcceptedResponse",
+      "trafficPercentage": 10,
+      "condition": "checkout traffic",
+      "deliveryPolicy": {
+        "guarantee": "effectively-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "shared-store"
+      }
+    },
+    {
+      "id": "edge-us-catalog-http-to-cache",
+      "fromNodeId": "us-catalog-http",
+      "toNodeId": "us-catalog-cache",
+      "dataType": "CatalogReadRequest",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-us-catalog-cache-to-replica",
+      "fromNodeId": "us-catalog-cache",
+      "toNodeId": "us-catalog-read-replica",
+      "dataType": "ProductRecord",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-us-search-http-to-index",
+      "fromNodeId": "us-search-http",
+      "toNodeId": "us-search-index",
+      "dataType": "SearchRequest",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-us-cart-http-to-cache",
+      "fromNodeId": "us-cart-http",
+      "toNodeId": "us-cart-cache",
+      "dataType": "CartMutationCommand",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-us-cart-cache-to-db",
+      "fromNodeId": "us-cart-cache",
+      "toNodeId": "us-cart-db",
+      "dataType": "CartMutationCommand",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-us-checkout-to-service",
+      "fromNodeId": "us-checkout-http",
+      "toNodeId": "us-order-service",
+      "dataType": "CheckoutCommand",
+      "interactionType": "request-response",
+      "timeoutMs": 1200,
+      "responseDataType": "OrderAcceptedResponse",
+      "deliveryPolicy": {
+        "guarantee": "effectively-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "shared-store"
+      },
+      "failurePolicy": {
+        "action": "retry",
+        "maximumAttempts": 2,
+        "backoff": "exponential",
+        "initialBackoffMs": 80,
+        "maximumBackoffMs": 400
+      }
+    },
+    {
+      "id": "edge-us-service-to-inventory-cache",
+      "fromNodeId": "us-order-service",
+      "toNodeId": "us-inventory-cache",
+      "dataType": "InventoryReservationCommand",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-us-inventory-cache-to-db",
+      "fromNodeId": "us-inventory-cache",
+      "toNodeId": "us-inventory-db",
+      "dataType": "InventoryReservationCommand",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-us-inventory-to-order-proxy",
+      "fromNodeId": "us-inventory-db",
+      "toNodeId": "us-order-db-proxy",
+      "dataType": "OrderRecord",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-us-order-proxy-to-db",
+      "fromNodeId": "us-order-db-proxy",
+      "toNodeId": "us-order-db",
+      "dataType": "OrderRecord",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-us-order-db-to-events",
+      "fromNodeId": "us-order-db",
+      "toNodeId": "us-order-events",
+      "dataType": "OrderCreatedEvent",
+      "interactionType": "published-event",
+      "deliveryPolicy": {
+        "guarantee": "effectively-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "producer"
+      }
+    },
+    {
+      "id": "edge-us-events-to-payment-queue",
+      "fromNodeId": "us-order-events",
+      "toNodeId": "us-payment-queue",
+      "dataType": "PaymentAuthorizationCommand",
+      "interactionType": "async-command",
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "manual",
+        "deduplication": "consumer"
+      },
+      "failurePolicy": {
+        "action": "queue",
+        "maximumAttempts": 5,
+        "backoff": "exponential",
+        "initialBackoffMs": 500,
+        "maximumBackoffMs": 10000
+      }
+    },
+    {
+      "id": "edge-us-payment-queue-to-worker",
+      "fromNodeId": "us-payment-queue",
+      "toNodeId": "us-payment-worker",
+      "dataType": "PaymentAuthorizationCommand",
+      "interactionType": "async-command",
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "manual",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-us-payment-queue-to-dlq",
+      "fromNodeId": "us-payment-queue",
+      "toNodeId": "us-payment-dlq",
+      "dataType": "PaymentAuthorizationCommand",
+      "interactionType": "published-event",
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "manual",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-us-payment-worker-to-circuit",
+      "fromNodeId": "us-payment-worker",
+      "toNodeId": "us-payment-circuit",
+      "dataType": "PaymentAuthorizationCommand",
+      "interactionType": "request-response",
+      "timeoutMs": 1300,
+      "responseDataType": "PaymentAuthorizedEvent",
+      "deliveryPolicy": {
+        "guarantee": "effectively-once",
+        "ordering": "per-key",
+        "acknowledgement": "manual",
+        "deduplication": "shared-store"
+      }
+    },
+    {
+      "id": "edge-us-circuit-to-payment-provider",
+      "fromNodeId": "us-payment-circuit",
+      "toNodeId": "us-payment-provider",
+      "dataType": "PaymentAuthorizationCommand",
+      "interactionType": "request-response",
+      "timeoutMs": 1300,
+      "responseDataType": "PaymentAuthorizedEvent",
+      "protection": "tokenization",
+      "network": {
+        "sourceRegion": "us-east-1",
+        "targetRegion": "us-east-1-payment-provider",
+        "bandwidthMbps": 12000,
+        "baseLatencyMs": 22,
+        "tlsHandshakeMs": 18,
+        "connectionReusePercent": 96,
+        "outagePercent": 0.08
+      },
+      "deliveryPolicy": {
+        "guarantee": "effectively-once",
+        "ordering": "per-key",
+        "acknowledgement": "manual",
+        "deduplication": "shared-store"
+      },
+      "failurePolicy": {
+        "timeoutMs": 1300,
+        "action": "retry",
+        "maximumAttempts": 2,
+        "backoff": "exponential",
+        "initialBackoffMs": 200,
+        "maximumBackoffMs": 1500
+      }
+    },
+    {
+      "id": "edge-us-payment-provider-to-notifications",
+      "fromNodeId": "us-payment-provider",
+      "toNodeId": "us-notification-events",
+      "dataType": "NotificationCommand",
+      "interactionType": "published-event",
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "producer"
+      }
+    },
+    {
+      "id": "edge-us-notifications-to-worker",
+      "fromNodeId": "us-notification-events",
+      "toNodeId": "us-notification-worker",
+      "dataType": "NotificationCommand",
+      "interactionType": "async-command",
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "manual",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-us-notification-worker-to-realtime",
+      "fromNodeId": "us-notification-worker",
+      "toNodeId": "us-realtime-gateway",
+      "dataType": "NotificationCommand",
+      "interactionType": "realtime-push",
+      "deliveryPolicy": {
+        "guarantee": "at-most-once",
+        "ordering": "none",
+        "acknowledgement": "automatic",
+        "deduplication": "none"
+      }
+    },
+    {
+      "id": "edge-us-events-to-global-backbone",
+      "fromNodeId": "us-order-events",
+      "toNodeId": "global-order-event-backbone",
+      "dataType": "OrderCreatedEvent",
+      "interactionType": "stream",
+      "network": {
+        "sourceRegion": "us-east-1",
+        "targetRegion": "us-east-1",
+        "bandwidthMbps": 22000,
+        "baseLatencyMs": 12,
+        "tlsHandshakeMs": 18,
+        "connectionReusePercent": 96,
+        "outagePercent": 0.05
+      },
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-global-analytics-to-us-search-index",
+      "fromNodeId": "global-analytics-stream",
+      "toNodeId": "us-search-index",
+      "dataType": "ProductIndexEvent",
+      "interactionType": "stream",
+      "network": {
+        "sourceRegion": "us-east-1",
+        "targetRegion": "us-east-1",
+        "bandwidthMbps": 18000,
+        "baseLatencyMs": 12,
+        "tlsHandshakeMs": 18,
+        "connectionReusePercent": 96,
+        "outagePercent": 0.04
+      },
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-global-analytics-to-us-catalog-replica",
+      "fromNodeId": "global-analytics-stream",
+      "toNodeId": "us-catalog-read-replica",
+      "dataType": "ProductIndexEvent",
+      "interactionType": "stream",
+      "network": {
+        "sourceRegion": "us-east-1",
+        "targetRegion": "us-east-1",
+        "bandwidthMbps": 18000,
+        "baseLatencyMs": 12,
+        "tlsHandshakeMs": 18,
+        "connectionReusePercent": 96,
+        "outagePercent": 0.04
+      },
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-global-to-eu-rate",
+      "fromNodeId": "global-traffic-manager",
+      "toNodeId": "eu-rate-limiter",
+      "dataType": "ShopperRequest",
+      "interactionType": "request-response",
+      "timeoutMs": 1300,
+      "responseDataType": "ShopperResponse",
+      "trafficPercentage": 35,
+      "protection": "tls",
+      "network": {
+        "sourceRegion": "global-edge",
+        "targetRegion": "eu-west-1",
+        "bandwidthMbps": 60000,
+        "baseLatencyMs": 36,
+        "tlsHandshakeMs": 18,
+        "connectionReusePercent": 96,
+        "outagePercent": 0.03
+      }
+    },
+    {
+      "id": "edge-eu-rate-to-router",
+      "fromNodeId": "eu-rate-limiter",
+      "toNodeId": "eu-traffic-router",
+      "dataType": "ShopperRequest",
+      "interactionType": "request-response",
+      "timeoutMs": 1200,
+      "responseDataType": "ShopperResponse"
+    },
+    {
+      "id": "edge-eu-router-to-catalog",
+      "fromNodeId": "eu-traffic-router",
+      "toNodeId": "eu-catalog-http",
+      "dataType": "CatalogReadRequest",
+      "interactionType": "request-response",
+      "timeoutMs": 900,
+      "responseDataType": "CatalogReadResponse",
+      "trafficPercentage": 50,
+      "condition": "catalog and product detail traffic"
+    },
+    {
+      "id": "edge-eu-router-to-search",
+      "fromNodeId": "eu-traffic-router",
+      "toNodeId": "eu-search-http",
+      "dataType": "SearchRequest",
+      "interactionType": "request-response",
+      "timeoutMs": 950,
+      "responseDataType": "SearchResponse",
+      "trafficPercentage": 20,
+      "condition": "search traffic"
+    },
+    {
+      "id": "edge-eu-router-to-cart",
+      "fromNodeId": "eu-traffic-router",
+      "toNodeId": "eu-cart-http",
+      "dataType": "CartMutationCommand",
+      "interactionType": "request-response",
+      "timeoutMs": 1300,
+      "responseDataType": "CartMutationResponse",
+      "trafficPercentage": 20,
+      "condition": "cart mutation traffic",
+      "deliveryPolicy": {
+        "guarantee": "effectively-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "shared-store"
+      }
+    },
+    {
+      "id": "edge-eu-router-to-checkout",
+      "fromNodeId": "eu-traffic-router",
+      "toNodeId": "eu-checkout-http",
+      "dataType": "CheckoutCommand",
+      "interactionType": "request-response",
+      "timeoutMs": 1600,
+      "responseDataType": "OrderAcceptedResponse",
+      "trafficPercentage": 10,
+      "condition": "checkout traffic",
+      "deliveryPolicy": {
+        "guarantee": "effectively-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "shared-store"
+      }
+    },
+    {
+      "id": "edge-eu-catalog-http-to-cache",
+      "fromNodeId": "eu-catalog-http",
+      "toNodeId": "eu-catalog-cache",
+      "dataType": "CatalogReadRequest",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-eu-catalog-cache-to-replica",
+      "fromNodeId": "eu-catalog-cache",
+      "toNodeId": "eu-catalog-read-replica",
+      "dataType": "ProductRecord",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-eu-search-http-to-index",
+      "fromNodeId": "eu-search-http",
+      "toNodeId": "eu-search-index",
+      "dataType": "SearchRequest",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-eu-cart-http-to-cache",
+      "fromNodeId": "eu-cart-http",
+      "toNodeId": "eu-cart-cache",
+      "dataType": "CartMutationCommand",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-eu-cart-cache-to-db",
+      "fromNodeId": "eu-cart-cache",
+      "toNodeId": "eu-cart-db",
+      "dataType": "CartMutationCommand",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-eu-checkout-to-service",
+      "fromNodeId": "eu-checkout-http",
+      "toNodeId": "eu-order-service",
+      "dataType": "CheckoutCommand",
+      "interactionType": "request-response",
+      "timeoutMs": 1200,
+      "responseDataType": "OrderAcceptedResponse",
+      "deliveryPolicy": {
+        "guarantee": "effectively-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "shared-store"
+      },
+      "failurePolicy": {
+        "action": "retry",
+        "maximumAttempts": 2,
+        "backoff": "exponential",
+        "initialBackoffMs": 80,
+        "maximumBackoffMs": 400
+      }
+    },
+    {
+      "id": "edge-eu-service-to-inventory-cache",
+      "fromNodeId": "eu-order-service",
+      "toNodeId": "eu-inventory-cache",
+      "dataType": "InventoryReservationCommand",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-eu-inventory-cache-to-db",
+      "fromNodeId": "eu-inventory-cache",
+      "toNodeId": "eu-inventory-db",
+      "dataType": "InventoryReservationCommand",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-eu-inventory-to-order-proxy",
+      "fromNodeId": "eu-inventory-db",
+      "toNodeId": "eu-order-db-proxy",
+      "dataType": "OrderRecord",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-eu-order-proxy-to-db",
+      "fromNodeId": "eu-order-db-proxy",
+      "toNodeId": "eu-order-db",
+      "dataType": "OrderRecord",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-eu-order-db-to-events",
+      "fromNodeId": "eu-order-db",
+      "toNodeId": "eu-order-events",
+      "dataType": "OrderCreatedEvent",
+      "interactionType": "published-event",
+      "deliveryPolicy": {
+        "guarantee": "effectively-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "producer"
+      }
+    },
+    {
+      "id": "edge-eu-events-to-payment-queue",
+      "fromNodeId": "eu-order-events",
+      "toNodeId": "eu-payment-queue",
+      "dataType": "PaymentAuthorizationCommand",
+      "interactionType": "async-command",
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "manual",
+        "deduplication": "consumer"
+      },
+      "failurePolicy": {
+        "action": "queue",
+        "maximumAttempts": 5,
+        "backoff": "exponential",
+        "initialBackoffMs": 500,
+        "maximumBackoffMs": 10000
+      }
+    },
+    {
+      "id": "edge-eu-payment-queue-to-worker",
+      "fromNodeId": "eu-payment-queue",
+      "toNodeId": "eu-payment-worker",
+      "dataType": "PaymentAuthorizationCommand",
+      "interactionType": "async-command",
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "manual",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-eu-payment-queue-to-dlq",
+      "fromNodeId": "eu-payment-queue",
+      "toNodeId": "eu-payment-dlq",
+      "dataType": "PaymentAuthorizationCommand",
+      "interactionType": "published-event",
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "manual",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-eu-payment-worker-to-circuit",
+      "fromNodeId": "eu-payment-worker",
+      "toNodeId": "eu-payment-circuit",
+      "dataType": "PaymentAuthorizationCommand",
+      "interactionType": "request-response",
+      "timeoutMs": 1300,
+      "responseDataType": "PaymentAuthorizedEvent",
+      "deliveryPolicy": {
+        "guarantee": "effectively-once",
+        "ordering": "per-key",
+        "acknowledgement": "manual",
+        "deduplication": "shared-store"
+      }
+    },
+    {
+      "id": "edge-eu-circuit-to-payment-provider",
+      "fromNodeId": "eu-payment-circuit",
+      "toNodeId": "eu-payment-provider",
+      "dataType": "PaymentAuthorizationCommand",
+      "interactionType": "request-response",
+      "timeoutMs": 1300,
+      "responseDataType": "PaymentAuthorizedEvent",
+      "protection": "tokenization",
+      "network": {
+        "sourceRegion": "eu-west-1",
+        "targetRegion": "eu-west-1-payment-provider",
+        "bandwidthMbps": 12000,
+        "baseLatencyMs": 22,
+        "tlsHandshakeMs": 18,
+        "connectionReusePercent": 96,
+        "outagePercent": 0.08
+      },
+      "deliveryPolicy": {
+        "guarantee": "effectively-once",
+        "ordering": "per-key",
+        "acknowledgement": "manual",
+        "deduplication": "shared-store"
+      },
+      "failurePolicy": {
+        "timeoutMs": 1300,
+        "action": "retry",
+        "maximumAttempts": 2,
+        "backoff": "exponential",
+        "initialBackoffMs": 200,
+        "maximumBackoffMs": 1500
+      }
+    },
+    {
+      "id": "edge-eu-payment-provider-to-notifications",
+      "fromNodeId": "eu-payment-provider",
+      "toNodeId": "eu-notification-events",
+      "dataType": "NotificationCommand",
+      "interactionType": "published-event",
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "producer"
+      }
+    },
+    {
+      "id": "edge-eu-notifications-to-worker",
+      "fromNodeId": "eu-notification-events",
+      "toNodeId": "eu-notification-worker",
+      "dataType": "NotificationCommand",
+      "interactionType": "async-command",
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "manual",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-eu-notification-worker-to-realtime",
+      "fromNodeId": "eu-notification-worker",
+      "toNodeId": "eu-realtime-gateway",
+      "dataType": "NotificationCommand",
+      "interactionType": "realtime-push",
+      "deliveryPolicy": {
+        "guarantee": "at-most-once",
+        "ordering": "none",
+        "acknowledgement": "automatic",
+        "deduplication": "none"
+      }
+    },
+    {
+      "id": "edge-eu-events-to-global-backbone",
+      "fromNodeId": "eu-order-events",
+      "toNodeId": "global-order-event-backbone",
+      "dataType": "OrderCreatedEvent",
+      "interactionType": "stream",
+      "network": {
+        "sourceRegion": "eu-west-1",
+        "targetRegion": "us-east-1",
+        "bandwidthMbps": 22000,
+        "baseLatencyMs": 82,
+        "tlsHandshakeMs": 18,
+        "connectionReusePercent": 96,
+        "outagePercent": 0.05
+      },
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-global-analytics-to-eu-search-index",
+      "fromNodeId": "global-analytics-stream",
+      "toNodeId": "eu-search-index",
+      "dataType": "ProductIndexEvent",
+      "interactionType": "stream",
+      "network": {
+        "sourceRegion": "us-east-1",
+        "targetRegion": "eu-west-1",
+        "bandwidthMbps": 18000,
+        "baseLatencyMs": 82,
+        "tlsHandshakeMs": 18,
+        "connectionReusePercent": 96,
+        "outagePercent": 0.04
+      },
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-global-analytics-to-eu-catalog-replica",
+      "fromNodeId": "global-analytics-stream",
+      "toNodeId": "eu-catalog-read-replica",
+      "dataType": "ProductIndexEvent",
+      "interactionType": "stream",
+      "network": {
+        "sourceRegion": "us-east-1",
+        "targetRegion": "eu-west-1",
+        "bandwidthMbps": 18000,
+        "baseLatencyMs": 82,
+        "tlsHandshakeMs": 18,
+        "connectionReusePercent": 96,
+        "outagePercent": 0.04
+      },
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-global-to-ap-rate",
+      "fromNodeId": "global-traffic-manager",
+      "toNodeId": "ap-rate-limiter",
+      "dataType": "ShopperRequest",
+      "interactionType": "request-response",
+      "timeoutMs": 1300,
+      "responseDataType": "ShopperResponse",
+      "trafficPercentage": 20,
+      "protection": "tls",
+      "network": {
+        "sourceRegion": "global-edge",
+        "targetRegion": "ap-southeast-1",
+        "bandwidthMbps": 60000,
+        "baseLatencyMs": 52,
+        "tlsHandshakeMs": 18,
+        "connectionReusePercent": 96,
+        "outagePercent": 0.03
+      }
+    },
+    {
+      "id": "edge-ap-rate-to-router",
+      "fromNodeId": "ap-rate-limiter",
+      "toNodeId": "ap-traffic-router",
+      "dataType": "ShopperRequest",
+      "interactionType": "request-response",
+      "timeoutMs": 1200,
+      "responseDataType": "ShopperResponse"
+    },
+    {
+      "id": "edge-ap-router-to-catalog",
+      "fromNodeId": "ap-traffic-router",
+      "toNodeId": "ap-catalog-http",
+      "dataType": "CatalogReadRequest",
+      "interactionType": "request-response",
+      "timeoutMs": 900,
+      "responseDataType": "CatalogReadResponse",
+      "trafficPercentage": 50,
+      "condition": "catalog and product detail traffic"
+    },
+    {
+      "id": "edge-ap-router-to-search",
+      "fromNodeId": "ap-traffic-router",
+      "toNodeId": "ap-search-http",
+      "dataType": "SearchRequest",
+      "interactionType": "request-response",
+      "timeoutMs": 950,
+      "responseDataType": "SearchResponse",
+      "trafficPercentage": 20,
+      "condition": "search traffic"
+    },
+    {
+      "id": "edge-ap-router-to-cart",
+      "fromNodeId": "ap-traffic-router",
+      "toNodeId": "ap-cart-http",
+      "dataType": "CartMutationCommand",
+      "interactionType": "request-response",
+      "timeoutMs": 1300,
+      "responseDataType": "CartMutationResponse",
+      "trafficPercentage": 20,
+      "condition": "cart mutation traffic",
+      "deliveryPolicy": {
+        "guarantee": "effectively-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "shared-store"
+      }
+    },
+    {
+      "id": "edge-ap-router-to-checkout",
+      "fromNodeId": "ap-traffic-router",
+      "toNodeId": "ap-checkout-http",
+      "dataType": "CheckoutCommand",
+      "interactionType": "request-response",
+      "timeoutMs": 1600,
+      "responseDataType": "OrderAcceptedResponse",
+      "trafficPercentage": 10,
+      "condition": "checkout traffic",
+      "deliveryPolicy": {
+        "guarantee": "effectively-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "shared-store"
+      }
+    },
+    {
+      "id": "edge-ap-catalog-http-to-cache",
+      "fromNodeId": "ap-catalog-http",
+      "toNodeId": "ap-catalog-cache",
+      "dataType": "CatalogReadRequest",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-ap-catalog-cache-to-replica",
+      "fromNodeId": "ap-catalog-cache",
+      "toNodeId": "ap-catalog-read-replica",
+      "dataType": "ProductRecord",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-ap-search-http-to-index",
+      "fromNodeId": "ap-search-http",
+      "toNodeId": "ap-search-index",
+      "dataType": "SearchRequest",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-ap-cart-http-to-cache",
+      "fromNodeId": "ap-cart-http",
+      "toNodeId": "ap-cart-cache",
+      "dataType": "CartMutationCommand",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-ap-cart-cache-to-db",
+      "fromNodeId": "ap-cart-cache",
+      "toNodeId": "ap-cart-db",
+      "dataType": "CartMutationCommand",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-ap-checkout-to-service",
+      "fromNodeId": "ap-checkout-http",
+      "toNodeId": "ap-order-service",
+      "dataType": "CheckoutCommand",
+      "interactionType": "request-response",
+      "timeoutMs": 1200,
+      "responseDataType": "OrderAcceptedResponse",
+      "deliveryPolicy": {
+        "guarantee": "effectively-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "shared-store"
+      },
+      "failurePolicy": {
+        "action": "retry",
+        "maximumAttempts": 2,
+        "backoff": "exponential",
+        "initialBackoffMs": 80,
+        "maximumBackoffMs": 400
+      }
+    },
+    {
+      "id": "edge-ap-service-to-inventory-cache",
+      "fromNodeId": "ap-order-service",
+      "toNodeId": "ap-inventory-cache",
+      "dataType": "InventoryReservationCommand",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-ap-inventory-cache-to-db",
+      "fromNodeId": "ap-inventory-cache",
+      "toNodeId": "ap-inventory-db",
+      "dataType": "InventoryReservationCommand",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-ap-inventory-to-order-proxy",
+      "fromNodeId": "ap-inventory-db",
+      "toNodeId": "ap-order-db-proxy",
+      "dataType": "OrderRecord",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-ap-order-proxy-to-db",
+      "fromNodeId": "ap-order-db-proxy",
+      "toNodeId": "ap-order-db",
+      "dataType": "OrderRecord",
+      "interactionType": "database-operation"
+    },
+    {
+      "id": "edge-ap-order-db-to-events",
+      "fromNodeId": "ap-order-db",
+      "toNodeId": "ap-order-events",
+      "dataType": "OrderCreatedEvent",
+      "interactionType": "published-event",
+      "deliveryPolicy": {
+        "guarantee": "effectively-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "producer"
+      }
+    },
+    {
+      "id": "edge-ap-events-to-payment-queue",
+      "fromNodeId": "ap-order-events",
+      "toNodeId": "ap-payment-queue",
+      "dataType": "PaymentAuthorizationCommand",
+      "interactionType": "async-command",
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "manual",
+        "deduplication": "consumer"
+      },
+      "failurePolicy": {
+        "action": "queue",
+        "maximumAttempts": 5,
+        "backoff": "exponential",
+        "initialBackoffMs": 500,
+        "maximumBackoffMs": 10000
+      }
+    },
+    {
+      "id": "edge-ap-payment-queue-to-worker",
+      "fromNodeId": "ap-payment-queue",
+      "toNodeId": "ap-payment-worker",
+      "dataType": "PaymentAuthorizationCommand",
+      "interactionType": "async-command",
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "manual",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-ap-payment-queue-to-dlq",
+      "fromNodeId": "ap-payment-queue",
+      "toNodeId": "ap-payment-dlq",
+      "dataType": "PaymentAuthorizationCommand",
+      "interactionType": "published-event",
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "manual",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-ap-payment-worker-to-circuit",
+      "fromNodeId": "ap-payment-worker",
+      "toNodeId": "ap-payment-circuit",
+      "dataType": "PaymentAuthorizationCommand",
+      "interactionType": "request-response",
+      "timeoutMs": 1300,
+      "responseDataType": "PaymentAuthorizedEvent",
+      "deliveryPolicy": {
+        "guarantee": "effectively-once",
+        "ordering": "per-key",
+        "acknowledgement": "manual",
+        "deduplication": "shared-store"
+      }
+    },
+    {
+      "id": "edge-ap-circuit-to-payment-provider",
+      "fromNodeId": "ap-payment-circuit",
+      "toNodeId": "ap-payment-provider",
+      "dataType": "PaymentAuthorizationCommand",
+      "interactionType": "request-response",
+      "timeoutMs": 1300,
+      "responseDataType": "PaymentAuthorizedEvent",
+      "protection": "tokenization",
+      "network": {
+        "sourceRegion": "ap-southeast-1",
+        "targetRegion": "ap-southeast-1-payment-provider",
+        "bandwidthMbps": 12000,
+        "baseLatencyMs": 22,
+        "tlsHandshakeMs": 18,
+        "connectionReusePercent": 96,
+        "outagePercent": 0.08
+      },
+      "deliveryPolicy": {
+        "guarantee": "effectively-once",
+        "ordering": "per-key",
+        "acknowledgement": "manual",
+        "deduplication": "shared-store"
+      },
+      "failurePolicy": {
+        "timeoutMs": 1300,
+        "action": "retry",
+        "maximumAttempts": 2,
+        "backoff": "exponential",
+        "initialBackoffMs": 200,
+        "maximumBackoffMs": 1500
+      }
+    },
+    {
+      "id": "edge-ap-payment-provider-to-notifications",
+      "fromNodeId": "ap-payment-provider",
+      "toNodeId": "ap-notification-events",
+      "dataType": "NotificationCommand",
+      "interactionType": "published-event",
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "producer"
+      }
+    },
+    {
+      "id": "edge-ap-notifications-to-worker",
+      "fromNodeId": "ap-notification-events",
+      "toNodeId": "ap-notification-worker",
+      "dataType": "NotificationCommand",
+      "interactionType": "async-command",
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "manual",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-ap-notification-worker-to-realtime",
+      "fromNodeId": "ap-notification-worker",
+      "toNodeId": "ap-realtime-gateway",
+      "dataType": "NotificationCommand",
+      "interactionType": "realtime-push",
+      "deliveryPolicy": {
+        "guarantee": "at-most-once",
+        "ordering": "none",
+        "acknowledgement": "automatic",
+        "deduplication": "none"
+      }
+    },
+    {
+      "id": "edge-ap-events-to-global-backbone",
+      "fromNodeId": "ap-order-events",
+      "toNodeId": "global-order-event-backbone",
+      "dataType": "OrderCreatedEvent",
+      "interactionType": "stream",
+      "network": {
+        "sourceRegion": "ap-southeast-1",
+        "targetRegion": "us-east-1",
+        "bandwidthMbps": 22000,
+        "baseLatencyMs": 145,
+        "tlsHandshakeMs": 18,
+        "connectionReusePercent": 96,
+        "outagePercent": 0.05
+      },
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-global-analytics-to-ap-search-index",
+      "fromNodeId": "global-analytics-stream",
+      "toNodeId": "ap-search-index",
+      "dataType": "ProductIndexEvent",
+      "interactionType": "stream",
+      "network": {
+        "sourceRegion": "us-east-1",
+        "targetRegion": "ap-southeast-1",
+        "bandwidthMbps": 18000,
+        "baseLatencyMs": 145,
+        "tlsHandshakeMs": 18,
+        "connectionReusePercent": 96,
+        "outagePercent": 0.04
+      },
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-global-analytics-to-ap-catalog-replica",
+      "fromNodeId": "global-analytics-stream",
+      "toNodeId": "ap-catalog-read-replica",
+      "dataType": "ProductIndexEvent",
+      "interactionType": "stream",
+      "network": {
+        "sourceRegion": "us-east-1",
+        "targetRegion": "ap-southeast-1",
+        "bandwidthMbps": 18000,
+        "baseLatencyMs": 145,
+        "tlsHandshakeMs": 18,
+        "connectionReusePercent": 96,
+        "outagePercent": 0.04
+      },
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-global-backbone-to-analytics",
+      "fromNodeId": "global-order-event-backbone",
+      "toNodeId": "global-analytics-stream",
+      "dataType": "AnalyticsEvent",
+      "interactionType": "stream",
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-global-analytics-to-data-lake",
+      "fromNodeId": "global-analytics-stream",
+      "toNodeId": "global-data-lake",
+      "dataType": "AnalyticsEvent",
+      "interactionType": "stream",
+      "deliveryPolicy": {
+        "guarantee": "at-least-once",
+        "ordering": "per-key",
+        "acknowledgement": "automatic",
+        "deduplication": "consumer"
+      }
+    },
+    {
+      "id": "edge-global-analytics-to-observability",
+      "fromNodeId": "global-analytics-stream",
+      "toNodeId": "global-observability-metrics",
+      "dataType": "AnalyticsEvent",
+      "interactionType": "published-event",
+      "deliveryPolicy": {
+        "guarantee": "at-most-once",
+        "ordering": "none",
+        "acknowledgement": "automatic",
+        "deduplication": "none"
+      }
+    }
+  ],
+  "dataContracts": [
+    {
+      "name": "ShopperRequest",
+      "version": "1.0",
+      "kind": "request",
+      "description": "Inbound shopper request before regional routing. Used to model global traffic volume and public edge trust-boundary protection.",
+      "fields": [
+        {
+          "name": "requestId",
+          "type": "string",
+          "required": true,
+          "example": "req_20260705_000001"
+        },
+        {
+          "name": "sessionId",
+          "type": "string",
+          "required": true,
+          "example": "sess_7f3a9"
+        },
+        {
+          "name": "customerId",
+          "type": "string",
+          "required": false,
+          "sensitive": true,
+          "example": "cus_18492"
+        },
+        {
+          "name": "regionHint",
+          "type": "string",
+          "required": true,
+          "example": "eu-west-1"
+        },
+        {
+          "name": "route",
+          "type": "string",
+          "required": true,
+          "example": "checkout"
+        },
+        {
+          "name": "createdAt",
+          "type": "timestamp",
+          "required": true
+        }
+      ],
+      "estimatedSizeBytes": 1800,
+      "correlationKey": "requestId",
+      "partitionKey": "sessionId",
+      "compatibility": "backward"
+    },
+    {
+      "name": "ShopperResponse",
+      "version": "1.0",
+      "kind": "response",
+      "description": "Generic synchronous response returned to the shopper-facing caller.",
+      "fields": [
+        {
+          "name": "requestId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "required": true,
+          "example": "accepted"
+        },
+        {
+          "name": "regionServed",
+          "type": "string",
+          "required": true,
+          "example": "us-east-1"
+        }
+      ],
+      "estimatedSizeBytes": 520,
+      "correlationKey": "requestId",
+      "compatibility": "backward"
+    },
+    {
+      "name": "CatalogReadRequest",
+      "version": "1.0",
+      "kind": "request",
+      "description": "Product detail and listing request served from regional catalog cache and replicas.",
+      "fields": [
+        {
+          "name": "requestId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "sku",
+          "type": "string",
+          "required": true,
+          "example": "sku_448812"
+        },
+        {
+          "name": "locale",
+          "type": "string",
+          "required": true,
+          "example": "en-US"
+        },
+        {
+          "name": "region",
+          "type": "string",
+          "required": true,
+          "example": "us-east-1"
+        }
+      ],
+      "estimatedSizeBytes": 900,
+      "correlationKey": "requestId",
+      "partitionKey": "sku",
+      "compatibility": "backward"
+    },
+    {
+      "name": "CatalogReadResponse",
+      "version": "1.0",
+      "kind": "response",
+      "description": "Compact product result for catalog read requests.",
+      "fields": [
+        {
+          "name": "requestId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "sku",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "available",
+          "type": "boolean",
+          "required": true
+        }
+      ],
+      "estimatedSizeBytes": 1400,
+      "compatibility": "backward"
+    },
+    {
+      "name": "SearchRequest",
+      "version": "1.0",
+      "kind": "request",
+      "description": "Search query routed to a regional search index.",
+      "fields": [
+        {
+          "name": "requestId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "query",
+          "type": "string",
+          "required": true,
+          "example": "running shoes"
+        },
+        {
+          "name": "filters",
+          "type": "object",
+          "required": false,
+          "example": {
+            "brand": ["Acme"],
+            "size": ["42"]
+          }
+        },
+        {
+          "name": "region",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "estimatedSizeBytes": 1200,
+      "correlationKey": "requestId",
+      "partitionKey": "query",
+      "compatibility": "backward"
+    },
+    {
+      "name": "SearchResponse",
+      "version": "1.0",
+      "kind": "response",
+      "description": "Search result metadata returned to clients.",
+      "fields": [
+        {
+          "name": "requestId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "resultCount",
+          "type": "number",
+          "required": true
+        },
+        {
+          "name": "servedFromRegion",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "estimatedSizeBytes": 2200,
+      "compatibility": "backward"
+    },
+    {
+      "name": "CartMutationCommand",
+      "version": "1.0",
+      "kind": "command",
+      "description": "Idempotent add, remove, or quantity update for a shopper cart.",
+      "fields": [
+        {
+          "name": "cartMutationId",
+          "type": "string",
+          "required": true,
+          "example": "cartmut_901"
+        },
+        {
+          "name": "cartId",
+          "type": "string",
+          "required": true,
+          "example": "cart_778"
+        },
+        {
+          "name": "customerId",
+          "type": "string",
+          "required": true,
+          "sensitive": true,
+          "example": "cus_18492"
+        },
+        {
+          "name": "sku",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "quantity",
+          "type": "number",
+          "required": true,
+          "example": 2
+        },
+        {
+          "name": "occurredAt",
+          "type": "timestamp",
+          "required": true
+        }
+      ],
+      "estimatedSizeBytes": 1600,
+      "idempotencyKey": "cartMutationId",
+      "correlationKey": "cartId",
+      "partitionKey": "cartId",
+      "compatibility": "backward"
+    },
+    {
+      "name": "CartMutationResponse",
+      "version": "1.0",
+      "kind": "response",
+      "description": "Cart mutation acknowledgement.",
+      "fields": [
+        {
+          "name": "cartMutationId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "cartVersion",
+          "type": "number",
+          "required": true
+        },
+        {
+          "name": "accepted",
+          "type": "boolean",
+          "required": true
+        }
+      ],
+      "estimatedSizeBytes": 520,
+      "compatibility": "backward"
+    },
+    {
+      "name": "CartState",
+      "version": "1.0",
+      "kind": "record",
+      "description": "Canonical regional cart state stored behind write-through cache.",
+      "fields": [
+        {
+          "name": "cartId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "customerId",
+          "type": "string",
+          "required": true,
+          "sensitive": true
+        },
+        {
+          "name": "items",
+          "type": "array",
+          "required": true
+        },
+        {
+          "name": "updatedAt",
+          "type": "timestamp",
+          "required": true
+        }
+      ],
+      "estimatedSizeBytes": 4600,
+      "correlationKey": "cartId",
+      "partitionKey": "cartId",
+      "compatibility": "backward"
+    },
+    {
+      "name": "CheckoutCommand",
+      "version": "1.0",
+      "kind": "command",
+      "description": "Idempotent checkout request that creates an order and starts asynchronous payment authorization.",
+      "fields": [
+        {
+          "name": "checkoutId",
+          "type": "string",
+          "required": true,
+          "example": "chk_20260705_18"
+        },
+        {
+          "name": "cartId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "customerId",
+          "type": "string",
+          "required": true,
+          "sensitive": true
+        },
+        {
+          "name": "orderId",
+          "type": "string",
+          "required": true,
+          "example": "ord_20260705_1881"
+        },
+        {
+          "name": "totalCents",
+          "type": "number",
+          "required": true,
+          "example": 12900
+        },
+        {
+          "name": "currency",
+          "type": "string",
+          "required": true,
+          "example": "USD"
+        },
+        {
+          "name": "paymentNetworkToken",
+          "type": "string",
+          "required": true,
+          "example": "tok_network_abc"
+        }
+      ],
+      "estimatedSizeBytes": 2200,
+      "idempotencyKey": "checkoutId",
+      "correlationKey": "orderId",
+      "partitionKey": "orderId",
+      "compatibility": "backward"
+    },
+    {
+      "name": "OrderAcceptedResponse",
+      "version": "1.0",
+      "kind": "response",
+      "description": "Synchronous checkout acknowledgement returned after durable order acceptance.",
+      "fields": [
+        {
+          "name": "checkoutId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "orderId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "accepted",
+          "type": "boolean",
+          "required": true
+        },
+        {
+          "name": "estimatedConfirmationSeconds",
+          "type": "number",
+          "required": true
+        }
+      ],
+      "estimatedSizeBytes": 700,
+      "compatibility": "backward"
+    },
+    {
+      "name": "InventoryReservationCommand",
+      "version": "1.0",
+      "kind": "command",
+      "description": "Inventory reservation requested during checkout.",
+      "fields": [
+        {
+          "name": "orderId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "reservationId",
+          "type": "string",
+          "required": true,
+          "example": "res_881"
+        },
+        {
+          "name": "sku",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "quantity",
+          "type": "number",
+          "required": true
+        },
+        {
+          "name": "expiresAt",
+          "type": "timestamp",
+          "required": true
+        }
+      ],
+      "estimatedSizeBytes": 1300,
+      "idempotencyKey": "reservationId",
+      "correlationKey": "orderId",
+      "partitionKey": "sku",
+      "compatibility": "backward"
+    },
+    {
+      "name": "InventoryRecord",
+      "version": "1.0",
+      "kind": "record",
+      "description": "Regional inventory availability and reservation counters.",
+      "fields": [
+        {
+          "name": "sku",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "available",
+          "type": "number",
+          "required": true
+        },
+        {
+          "name": "reserved",
+          "type": "number",
+          "required": true
+        },
+        {
+          "name": "updatedAt",
+          "type": "timestamp",
+          "required": true
+        }
+      ],
+      "estimatedSizeBytes": 1300,
+      "partitionKey": "sku",
+      "compatibility": "backward"
+    },
+    {
+      "name": "OrderRecord",
+      "version": "1.0",
+      "kind": "record",
+      "description": "Durable regional order record. Order ids are globally unique so active-active regions can merge without duplicate primary keys.",
+      "fields": [
+        {
+          "name": "orderId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "customerId",
+          "type": "string",
+          "required": true,
+          "sensitive": true
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "required": true,
+          "example": "accepted"
+        },
+        {
+          "name": "totalCents",
+          "type": "number",
+          "required": true
+        },
+        {
+          "name": "region",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "createdAt",
+          "type": "timestamp",
+          "required": true
+        }
+      ],
+      "estimatedSizeBytes": 2600,
+      "correlationKey": "orderId",
+      "partitionKey": "orderId",
+      "compatibility": "backward"
+    },
+    {
+      "name": "OrderCreatedEvent",
+      "version": "1.0",
+      "kind": "event",
+      "description": "Append-only event emitted after an order record is committed.",
+      "fields": [
+        {
+          "name": "eventId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "orderId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "customerId",
+          "type": "string",
+          "required": true,
+          "sensitive": true
+        },
+        {
+          "name": "totalCents",
+          "type": "number",
+          "required": true
+        },
+        {
+          "name": "region",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "createdAt",
+          "type": "timestamp",
+          "required": true
+        }
+      ],
+      "estimatedSizeBytes": 1900,
+      "idempotencyKey": "eventId",
+      "correlationKey": "orderId",
+      "partitionKey": "orderId",
+      "retentionSeconds": 604800,
+      "compatibility": "backward"
+    },
+    {
+      "name": "PaymentAuthorizationCommand",
+      "version": "1.0",
+      "kind": "command",
+      "description": "Tokenized payment authorization command. Contains network token only, not raw card data.",
+      "fields": [
+        {
+          "name": "paymentAttemptId",
+          "type": "string",
+          "required": true,
+          "example": "payatt_981"
+        },
+        {
+          "name": "orderId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "amountCents",
+          "type": "number",
+          "required": true
+        },
+        {
+          "name": "currency",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "paymentNetworkToken",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "estimatedSizeBytes": 1500,
+      "idempotencyKey": "paymentAttemptId",
+      "correlationKey": "orderId",
+      "partitionKey": "orderId",
+      "compatibility": "backward"
+    },
+    {
+      "name": "PaymentAuthorizedEvent",
+      "version": "1.0",
+      "kind": "event",
+      "description": "Payment provider authorization result.",
+      "fields": [
+        {
+          "name": "eventId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "paymentAttemptId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "orderId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "approved",
+          "type": "boolean",
+          "required": true
+        },
+        {
+          "name": "authorizedAt",
+          "type": "timestamp",
+          "required": true
+        }
+      ],
+      "estimatedSizeBytes": 1200,
+      "idempotencyKey": "eventId",
+      "correlationKey": "orderId",
+      "partitionKey": "orderId",
+      "compatibility": "backward"
+    },
+    {
+      "name": "NotificationCommand",
+      "version": "1.0",
+      "kind": "command",
+      "description": "Order/payment notification command sent to regional realtime gateways.",
+      "fields": [
+        {
+          "name": "notificationId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "customerId",
+          "type": "string",
+          "required": true,
+          "sensitive": true
+        },
+        {
+          "name": "orderId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "channel",
+          "type": "string",
+          "required": true,
+          "example": "websocket"
+        },
+        {
+          "name": "createdAt",
+          "type": "timestamp",
+          "required": true
+        }
+      ],
+      "estimatedSizeBytes": 1100,
+      "idempotencyKey": "notificationId",
+      "correlationKey": "orderId",
+      "partitionKey": "customerId",
+      "compatibility": "backward"
+    },
+    {
+      "name": "ProductRecord",
+      "version": "1.0",
+      "kind": "record",
+      "description": "Product catalog projection served by caches, read replicas, and search indexes.",
+      "fields": [
+        {
+          "name": "sku",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "priceCents",
+          "type": "number",
+          "required": true
+        },
+        {
+          "name": "inventoryStatus",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "updatedAt",
+          "type": "timestamp",
+          "required": true
+        }
+      ],
+      "estimatedSizeBytes": 3200,
+      "correlationKey": "sku",
+      "partitionKey": "sku",
+      "compatibility": "backward"
+    },
+    {
+      "name": "ProductIndexEvent",
+      "version": "1.0",
+      "kind": "event",
+      "description": "Catalog/search projection update broadcast from the global analytics plane.",
+      "fields": [
+        {
+          "name": "eventId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "sku",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "changedFields",
+          "type": "array",
+          "required": true
+        },
+        {
+          "name": "sourceVersion",
+          "type": "number",
+          "required": true
+        },
+        {
+          "name": "occurredAt",
+          "type": "timestamp",
+          "required": true
+        }
+      ],
+      "estimatedSizeBytes": 1600,
+      "idempotencyKey": "eventId",
+      "correlationKey": "sku",
+      "partitionKey": "sku",
+      "retentionSeconds": 86400,
+      "compatibility": "backward"
+    },
+    {
+      "name": "AnalyticsEvent",
+      "version": "1.0",
+      "kind": "event",
+      "description": "Normalized analytics fact derived from regional order streams.",
+      "fields": [
+        {
+          "name": "eventId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "sourceEventType",
+          "type": "string",
+          "required": true,
+          "example": "OrderCreatedEvent"
+        },
+        {
+          "name": "region",
+          "type": "string",
+          "required": true,
+          "example": "eu-west-1"
+        },
+        {
+          "name": "payloadVersion",
+          "type": "number",
+          "required": true
+        },
+        {
+          "name": "occurredAt",
+          "type": "timestamp",
+          "required": true
+        }
+      ],
+      "estimatedSizeBytes": 1900,
+      "idempotencyKey": "eventId",
+      "correlationKey": "eventId",
+      "partitionKey": "region",
+      "retentionSeconds": 2592000,
+      "compatibility": "backward"
+    }
+  ],
+  "simulationProfile": {
+    "durationSeconds": 900,
+    "cpuCores": 960,
+    "memoryMb": 1048576,
+    "networkLatencyMs": 8,
+    "requestsPerSecond": 120000,
+    "trafficPattern": "daily-peak",
+    "observedLatencyMs": 220,
+    "observedThroughputPerSecond": 118000,
+    "peakRequestsPerSecond": 240000,
+    "burstDurationSeconds": 180,
+    "rampUpSeconds": 60,
+    "payloadSizeBytes": 1800,
+    "duplicateEventPercent": 0.05,
+    "malformedEventPercent": 0.02
+  },
+  "architectureGoals": {
+    "averageTrafficPerSecond": 120000,
+    "peakTrafficPerSecond": 360000,
+    "maximumAverageLatencyMs": 280,
+    "maximumP95LatencyMs": 750,
+    "minimumAvailabilityPercent": 99.95,
+    "maximumDataLossEvents": 0,
+    "maximumRecoveryTimeSeconds": 120,
+    "maximumRecoveryPointSeconds": 5,
+    "maximumDataStalenessMs": 5000,
+    "orderingRequirement": "per-key"
+  },
+  "boundaries": [
+    {
+      "id": "system-global-commerce",
+      "label": "Global Commerce Platform",
+      "kind": "system",
+      "owner": "platform-architecture"
+    },
+    {
+      "id": "trust-public-edge",
+      "label": "Public Edge",
+      "kind": "trust-zone",
+      "parentId": "system-global-commerce",
+      "owner": "edge-platform"
+    },
+    {
+      "id": "trust-private-platform",
+      "label": "Private Platform Network",
+      "kind": "trust-zone",
+      "parentId": "system-global-commerce",
+      "owner": "platform-sre"
+    },
+    {
+      "id": "trust-external-providers",
+      "label": "External Provider Boundary",
+      "kind": "trust-zone",
+      "parentId": "system-global-commerce",
+      "owner": "vendor-management"
+    },
+    {
+      "id": "region-us-east-1",
+      "label": "US East Active Region",
+      "kind": "region",
+      "parentId": "trust-private-platform",
+      "owner": "us-platform-sre"
+    },
+    {
+      "id": "region-eu-west-1",
+      "label": "EU West Active Region",
+      "kind": "region",
+      "parentId": "trust-private-platform",
+      "owner": "eu-platform-sre"
+    },
+    {
+      "id": "region-ap-southeast-1",
+      "label": "AP Southeast Active Region",
+      "kind": "region",
+      "parentId": "trust-private-platform",
+      "owner": "ap-platform-sre"
+    },
+    {
+      "id": "global-analytics-boundary",
+      "label": "Global Analytics Plane",
+      "kind": "service",
+      "parentId": "trust-private-platform",
+      "owner": "data-platform"
+    }
+  ],
+  "failureScenarios": [
+    {
+      "id": "scenario-black-friday-3x-global-traffic",
+      "name": "Black Friday 3x global traffic spike",
+      "kind": "traffic-spike",
+      "affectedNodeIds": [],
+      "affectedBoundaryIds": [],
+      "startSeconds": 120,
+      "durationSeconds": 240,
+      "recoverySeconds": 60,
+      "trafficMultiplier": 3,
+      "expectedResponse": "CDN absorbs cacheable reads, global traffic manager keeps weighted routing, queues absorb checkout/payment pressure.",
+      "expectedUserImpact": "Catalog and search should stay responsive; checkout may degrade if payment queues or providers saturate.",
+      "recoveryBehavior": "Autoscaled workers drain payment and notification queues after the spike ends."
+    },
+    {
+      "id": "scenario-eu-region-unavailable",
+      "name": "EU West region unavailable during peak checkout",
+      "kind": "region-unavailable",
+      "affectedNodeIds": [],
+      "affectedBoundaryIds": ["region-eu-west-1"],
+      "startSeconds": 240,
+      "durationSeconds": 150,
+      "recoverySeconds": 90,
+      "expectedResponse": "Global traffic manager should stop sending new EU traffic and remaining regions should absorb part of the load.",
+      "expectedUserImpact": "EU shoppers may see errors during DNS/load-balancer failaway; already queued payment work is delayed until recovery.",
+      "recoveryBehavior": "EU services recover gradually and stream processors reconcile regional backlog into the global backbone."
+    },
+    {
+      "id": "scenario-payment-provider-slowdown",
+      "name": "Payment providers become 5x slower",
+      "kind": "dependency-slow",
+      "affectedNodeIds": [
+        "us-payment-provider",
+        "eu-payment-provider",
+        "ap-payment-provider"
+      ],
+      "affectedBoundaryIds": [],
+      "startSeconds": 180,
+      "durationSeconds": 180,
+      "recoverySeconds": 45,
+      "slowdownFactor": 5,
+      "expectedResponse": "Circuit breakers and worker retry budgets prevent synchronous checkout from blocking on the provider.",
+      "expectedUserImpact": "Orders are accepted but payment confirmation notifications arrive late.",
+      "recoveryBehavior": "Payment workers drain durable queues after provider latency returns to normal."
+    },
+    {
+      "id": "scenario-us-order-db-failover",
+      "name": "US order database primary failover",
+      "kind": "datastore-failover",
+      "affectedNodeIds": ["us-order-db"],
+      "affectedBoundaryIds": [],
+      "startSeconds": 300,
+      "durationSeconds": 45,
+      "recoverySeconds": 60,
+      "expectedResponse": "Order commits pause briefly while the regional database promotes a healthy primary.",
+      "expectedUserImpact": "Some US checkouts may be delayed or rejected; cart and catalog traffic should continue.",
+      "recoveryBehavior": "Order writes resume and regional order events catch up into payment and analytics streams."
+    },
+    {
+      "id": "scenario-global-backbone-half-capacity",
+      "name": "Global event backbone loses half capacity",
+      "kind": "partial-capacity-loss",
+      "affectedNodeIds": ["global-order-event-backbone", "global-analytics-stream"],
+      "affectedBoundaryIds": [],
+      "startSeconds": 360,
+      "durationSeconds": 180,
+      "recoverySeconds": 60,
+      "intensityPercent": 50,
+      "expectedResponse": "Regional checkout remains independent while analytics and cross-region projections lag.",
+      "expectedUserImpact": "Customer-facing checkout should continue; dashboards and catalog/search projections may be stale.",
+      "recoveryBehavior": "Global stream processors process retained events and restore projection freshness."
+    }
+  ],
+  "assumptions": [
+    {
+      "id": "assumption-active-active-order-ids",
+      "statement": "Order ids are globally unique before any regional database write, so active-active regions can merge order records by orderId.",
+      "status": "unverified",
+      "impact": "high",
+      "relatedIds": ["us-order-db", "eu-order-db", "ap-order-db"]
+    },
+    {
+      "id": "assumption-payment-idempotency",
+      "statement": "Payment providers honor paymentAttemptId as an idempotency key across retries and worker restarts.",
+      "status": "unverified",
+      "impact": "high",
+      "relatedIds": ["us-payment-provider", "eu-payment-provider", "ap-payment-provider"]
+    },
+    {
+      "id": "assumption-region-routing-failaway",
+      "statement": "The global traffic manager can remove an unhealthy region from routing within 60 seconds.",
+      "status": "unverified",
+      "impact": "medium",
+      "relatedIds": ["global-traffic-manager"]
+    }
+  ],
+  "decisionRecords": [
+    {
+      "id": "decision-active-active-regions",
+      "title": "Run checkout active-active across three regions",
+      "status": "proposed",
+      "context": "Huge ecommerce peaks require regional capacity and lower latency for catalog, cart, and checkout traffic.",
+      "decision": "Use weighted active-active routing to US East, EU West, and AP Southeast with independent regional order writes and global event reconciliation.",
+      "alternatives": [
+        "Single primary region with warm standby.",
+        "Active-passive per continent.",
+        "Centralized order database with all regions writing cross-region."
+      ],
+      "consequences": [
+        "Order ids and payment attempts need strong idempotency.",
+        "Analytics and product projections are eventually consistent.",
+        "Region failaway must be tested explicitly."
+      ],
+      "assumptionIds": [
+        "assumption-active-active-order-ids",
+        "assumption-region-routing-failaway"
+      ],
+      "relatedNodeIds": [
+        "global-traffic-manager",
+        "us-order-db",
+        "eu-order-db",
+        "ap-order-db",
+        "global-order-event-backbone"
+      ],
+      "relatedEdgeIds": [
+        "edge-global-to-us-rate",
+        "edge-global-to-eu-rate",
+        "edge-global-to-ap-rate"
+      ]
+    },
+    {
+      "id": "decision-async-payment-after-order-commit",
+      "title": "Accept orders before payment confirmation",
+      "status": "proposed",
+      "context": "Payment providers have lower quota and higher latency than the internal checkout path during flash-sale traffic.",
+      "decision": "Commit the order, enqueue payment authorization, and notify the shopper asynchronously once payment completes.",
+      "alternatives": [
+        "Authorize payment synchronously inside checkout.",
+        "Reject checkout when payment provider is slow.",
+        "Use one global payment queue only."
+      ],
+      "consequences": [
+        "Checkout response latency is protected from provider slowness.",
+        "Order state must expose pending payment status.",
+        "Payment queues and DLQs need operational replay ownership."
+      ],
+      "assumptionIds": ["assumption-payment-idempotency"],
+      "relatedNodeIds": [
+        "us-payment-queue",
+        "eu-payment-queue",
+        "ap-payment-queue",
+        "us-payment-provider",
+        "eu-payment-provider",
+        "ap-payment-provider"
+      ],
+      "relatedEdgeIds": [
+        "edge-us-events-to-payment-queue",
+        "edge-eu-events-to-payment-queue",
+        "edge-ap-events-to-payment-queue"
+      ]
+    }
+  ]
+}

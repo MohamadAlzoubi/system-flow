@@ -136,6 +136,45 @@ describe("evaluateGoals", () => {
     }
   })
 
+  it("passes and fails recovery and freshness goals when evidence is available", () => {
+    const report = evaluateGoals(
+      {
+        maximumRecoveryTimeSeconds: 180,
+        maximumRecoveryPointSeconds: 5,
+        maximumDataStalenessMs: 1000,
+        orderingRequirement: "none",
+      },
+      {
+        ...healthyMeasurements,
+        recoveryTimeSeconds: 150,
+        recoveryPointSeconds: 12,
+        dataStalenessMs: 500,
+      },
+    )
+
+    expect(report.evaluations).toContainEqual(
+      expect.objectContaining({
+        goal: "maximumRecoveryTimeSeconds",
+        status: "passed",
+        actual: 150,
+      }),
+    )
+    expect(report.evaluations).toContainEqual(
+      expect.objectContaining({
+        goal: "maximumRecoveryPointSeconds",
+        status: "failed",
+        actual: 12,
+      }),
+    )
+    expect(report.evaluations).toContainEqual(
+      expect.objectContaining({
+        goal: "maximumDataStalenessMs",
+        status: "passed",
+        actual: 500,
+      }),
+    )
+  })
+
   it("records undeclared goals as open questions", () => {
     const report = evaluateGoals(
       { averageTrafficPerSecond: 500, orderingRequirement: "none" },

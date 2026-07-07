@@ -122,6 +122,198 @@ describe("runSimulation", () => {
     )
   })
 
+  it("routes load balancer fan-out round-robin by default", () => {
+    const graph = structuredClone(productViewedFlow)
+    const sourceDefinition = nodeRegistry.get("event.source")
+    const loadBalancerDefinition = nodeRegistry.get("network.load-balancer")
+    const endpointDefinition = nodeRegistry.get("http.endpoint")
+    if (!sourceDefinition || !loadBalancerDefinition || !endpointDefinition) {
+      throw new Error("Fixture requires source, load balancer, and endpoint nodes")
+    }
+    const source = {
+      id: "source",
+      type: "event.source",
+      position: { x: 0, y: 0 },
+      config: { ...sourceDefinition.defaultConfig, ratePerSecond: 5000 },
+    }
+    const loadBalancer = {
+      id: "load-balancer",
+      type: "network.load-balancer",
+      position: { x: 200, y: 0 },
+      config: {
+        ...loadBalancerDefinition.defaultConfig,
+        healthyTargets: 2,
+        capacityPerTarget: 4000,
+      },
+    }
+    const firstEndpoint = {
+      id: "endpoint-a",
+      type: "http.endpoint",
+      position: { x: 400, y: -80 },
+      config: { ...endpointDefinition.defaultConfig, maxRequestsPerSecond: 5000 },
+    }
+    const secondEndpoint = {
+      id: "endpoint-b",
+      type: "http.endpoint",
+      position: { x: 400, y: 80 },
+      config: { ...endpointDefinition.defaultConfig, maxRequestsPerSecond: 5000 },
+    }
+    graph.nodes = [source, loadBalancer, firstEndpoint, secondEndpoint]
+    graph.failureScenarios = []
+    graph.edges = [
+      {
+        id: "source-to-lb",
+        fromNodeId: source.id,
+        toNodeId: loadBalancer.id,
+        dataType: "ProductViewedEvent",
+        interactionType: "request-response",
+      },
+      {
+        id: "lb-to-a",
+        fromNodeId: loadBalancer.id,
+        toNodeId: firstEndpoint.id,
+        dataType: "ProductViewedEvent",
+        interactionType: "request-response",
+      },
+      {
+        id: "lb-to-b",
+        fromNodeId: loadBalancer.id,
+        toNodeId: secondEndpoint.id,
+        dataType: "ProductViewedEvent",
+        interactionType: "request-response",
+      },
+    ]
+
+    const result = runSimulation(graph, nodeRegistry)
+
+    expect(
+      result.nodeMetrics.find((metric) => metric.nodeId === loadBalancer.id),
+    ).toEqual(
+      expect.objectContaining({
+        incomingRatePerSecond: 5000,
+        routingMode: "round-robin",
+        utilizationPercent: 62.5,
+      }),
+    )
+    expect(result.edgeMetrics.find((edge) => edge.edgeId === "lb-to-a")).toEqual(
+      expect.objectContaining({ ratePerSecond: 2500 }),
+    )
+    expect(result.edgeMetrics.find((edge) => edge.edgeId === "lb-to-b")).toEqual(
+      expect.objectContaining({ ratePerSecond: 2500 }),
+    )
+  })
+
+  it("does not route healthy queue traffic to a dead-letter queue", () => {
+    const graph = structuredClone(bottleneckFlow)
+    const deadLetterDefinition = nodeRegistry.get("messaging.dead-letter-queue")
+    if (!deadLetterDefinition) throw new Error("Fixture requires a DLQ node")
+    const source = graph.nodes[0]
+    const queue = graph.nodes[1]
+    const worker = graph.nodes[2]
+    const deadLetterQueue = {
+      id: "dlq",
+      type: "messaging.dead-letter-queue",
+      position: { x: 700, y: 140 },
+      config: { ...deadLetterDefinition.defaultConfig },
+    }
+    graph.nodes = [source, queue, worker, deadLetterQueue]
+    graph.failureScenarios = []
+    graph.edges = [
+      {
+        id: "source-to-queue",
+        fromNodeId: source.id,
+        toNodeId: queue.id,
+        dataType: "QueueJob",
+        interactionType: "async-command",
+      },
+      {
+        id: "queue-to-worker",
+        fromNodeId: queue.id,
+        toNodeId: worker.id,
+        dataType: "QueueJob",
+        interactionType: "async-command",
+      },
+      {
+        id: "queue-to-dlq",
+        fromNodeId: queue.id,
+        toNodeId: deadLetterQueue.id,
+        dataType: "QueueJob",
+        interactionType: "async-command",
+      },
+    ]
+
+    const result = runSimulation(graph, nodeRegistry)
+    const queueFrame = result.timeline
+      .at(-1)
+      ?.queues.find((frame) => frame.nodeId === queue.id)
+
+    expect(queueFrame).toEqual(
+      expect.objectContaining({
+        depth: expect.any(Number),
+        averageMessageAgeMs: expect.any(Number),
+      }),
+    )
+    expect(Number.isFinite(queueFrame?.depth)).toBe(true)
+    expect(Number.isFinite(queueFrame?.averageMessageAgeMs)).toBe(true)
+    expect(result.edgeMetrics.find((edge) => edge.edgeId === "queue-to-dlq")).toEqual(
+      expect.objectContaining({ ratePerSecond: 0, status: "inactive" }),
+    )
+    expect(
+      result.nodeMetrics.find((metric) => metric.nodeId === deadLetterQueue.id),
+    ).toEqual(expect.objectContaining({ incomingRatePerSecond: 0 }))
+  })
+
+  it("uses replicated workers as queue partition consumers", () => {
+    const graph = structuredClone(bottleneckFlow)
+    const source = graph.nodes[0]
+    const queue = graph.nodes[1]
+    const worker = graph.nodes[2]
+    source.config.ratePerSecond = 250
+    queue.config.orderingRequired = false
+    queue.config.partitions = 4
+    queue.config.maxThroughputPerPartition = 100
+    queue.config.brokerMaxThroughputPerSecond = 1000
+    worker.config.replicas = 3
+    worker.config.autoscalingEnabled = false
+    worker.config.concurrency = 100
+    worker.config.averageProcessingMs = 10
+    graph.nodes = [source, queue, worker]
+    graph.failureScenarios = []
+    graph.edges = [
+      {
+        id: "source-to-queue",
+        fromNodeId: source.id,
+        toNodeId: queue.id,
+        dataType: "QueueJob",
+        interactionType: "async-command",
+      },
+      {
+        id: "queue-to-worker",
+        fromNodeId: queue.id,
+        toNodeId: worker.id,
+        dataType: "QueueJob",
+        interactionType: "async-command",
+      },
+    ]
+
+    const result = runSimulation(graph, nodeRegistry)
+    const queueMetric = result.nodeMetrics.find((metric) => metric.nodeId === queue.id)
+
+    expect(queueMetric).toEqual(
+      expect.objectContaining({
+        incomingRatePerSecond: 250,
+        acceptedRatePerSecond: 250,
+        status: "healthy",
+      }),
+    )
+    expect(queueMetric?.queue).toEqual(
+      expect.objectContaining({ activePartitions: 3, overflowEvents: 0 }),
+    )
+    expect(result.warnings).not.toContainEqual(
+      expect.objectContaining({ code: "THROUGHPUT", nodeId: queue.id }),
+    )
+  })
+
   it("uses explicit merge semantics", () => {
     const graph = structuredClone(productViewedFlow)
     const source = graph.nodes[0]
@@ -435,7 +627,9 @@ describe("runSimulation", () => {
   it("explains confidence, calibration, and remediation", () => {
     const graph = structuredClone(bottleneckFlow)
     graph.simulationProfile.observedLatencyMs = 250
+    graph.simulationProfile.observedLatencySource = "production"
     graph.simulationProfile.observedThroughputPerSecond = 1000
+    graph.simulationProfile.observedThroughputSource = "load-test"
 
     const result = runSimulation(graph, nodeRegistry)
 
@@ -453,10 +647,44 @@ describe("runSimulation", () => {
         throughput: expect.any(Number),
       }),
     )
+    expect(result.explanation.calibrationEvidence).toEqual([
+      expect.objectContaining({
+        metric: "latency",
+        source: "production",
+        quality: "measured",
+      }),
+      expect.objectContaining({
+        metric: "throughput",
+        source: "load-test",
+        quality: "measured",
+      }),
+    ])
     expect(result.explanation.assumptions.length).toBeGreaterThan(0)
     expect(result.explanation.recommendations).toContainEqual(
       expect.objectContaining({ code: "THROUGHPUT", priority: "high" }),
     )
+  })
+
+  it("caps assumed calibration evidence at medium confidence", () => {
+    const graph = structuredClone(bottleneckFlow)
+    graph.simulationProfile.observedLatencyMs = 250
+    graph.simulationProfile.observedLatencySource = "assumed"
+    graph.simulationProfile.observedThroughputPerSecond = 1000
+    graph.simulationProfile.observedThroughputSource = "assumed"
+
+    const result = runSimulation(graph, nodeRegistry)
+
+    expect(result.explanation).toEqual(
+      expect.objectContaining({
+        confidence: "medium",
+        calibrated: true,
+        confidenceReasons: [expect.stringContaining("capped at medium confidence")],
+      }),
+    )
+    expect(result.explanation.calibrationEvidence).toEqual([
+      expect.objectContaining({ quality: "synthetic", source: "assumed" }),
+      expect.objectContaining({ quality: "synthetic", source: "assumed" }),
+    ])
   })
 
   it("applies burst, ramp, peak, and payload scenario inputs", () => {

@@ -1,5 +1,6 @@
 import type { FlowGraph, NodeDefinition, ValidationIssue } from "../../contracts"
 import { resolveEdgeContract } from "../contracts/contract-versions"
+import { deploymentRegionOf } from "../graph/resolve-region"
 
 export function validateFailures(
   graph: FlowGraph,
@@ -7,7 +8,10 @@ export function validateFailures(
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = []
   const nodes = new Map(graph.nodes.map((node) => [node.id, node]))
-  const boundaryIds = new Set((graph.boundaries ?? []).map((boundary) => boundary.id))
+  const boundaries = new Map(
+    (graph.boundaries ?? []).map((boundary) => [boundary.id, boundary]),
+  )
+  const boundaryIds = new Set(boundaries.keys())
 
   for (const edge of graph.edges) {
     const policy = edge.failurePolicy
@@ -47,10 +51,10 @@ export function validateFailures(
           const sharedBoundary =
             fallback.boundaryId !== undefined &&
             fallback.boundaryId === target?.boundaryId
+          const fallbackRegion = deploymentRegionOf(fallback, boundaries)
+          const targetRegion = target ? deploymentRegionOf(target, boundaries) : undefined
           const sharedRegion =
-            fallback.responsibility?.deploymentRegion !== undefined &&
-            fallback.responsibility.deploymentRegion ===
-              target?.responsibility?.deploymentRegion
+            fallbackRegion !== undefined && fallbackRegion === targetRegion
           if (sameNode || sharedBoundary || sharedRegion) {
             issues.push({
               severity: "warning",

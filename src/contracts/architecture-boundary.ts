@@ -6,6 +6,12 @@ export type BoundaryKind =
   | "availability-zone"
   | "trust-zone"
 
+export type BoundaryCanvasLayout = {
+  position: { x: number; y: number }
+  width: number
+  height: number
+}
+
 /** Architectural metadata grouping nodes, never free-form diagram decoration. */
 export type ArchitectureBoundary = {
   id: string
@@ -13,6 +19,10 @@ export type ArchitectureBoundary = {
   kind: BoundaryKind
   parentId?: string
   owner?: string
+  /** Stable region identifier used by node placement and edge network policies. */
+  regionCode?: string
+  /** Optional canvas placement for architectural containers such as regions. */
+  canvasLayout?: BoundaryCanvasLayout
 }
 
 export type ImplementationStatus =

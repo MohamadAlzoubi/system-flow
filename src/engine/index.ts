@@ -11,6 +11,25 @@ export {
 export { normalizeDataContract } from "./contracts/normalize-data-contract"
 export type { InteractionDefaults } from "./graph/infer-interaction-defaults"
 export { inferInteractionDefaults } from "./graph/infer-interaction-defaults"
+export { deploymentRegionOf } from "./graph/resolve-region"
+export {
+  applyNetworkPreset,
+  networkPresetById,
+  networkPresets,
+  suggestedNetworkPresetId,
+} from "./network/network-presets"
+export type {
+  ReviewAnswerKind,
+  ReviewMode,
+  ReviewModeId,
+  ReviewQuestion,
+} from "./review/review-modes"
+export {
+  applyReviewAnswer,
+  buildReviewQuestions,
+  isReviewQuestionAnswered,
+  reviewModes,
+} from "./review/review-modes"
 export type { RuleOptions } from "./rules/evaluate-rules"
 export {
   evaluateRules,
@@ -24,8 +43,10 @@ export {
 export type { UserImpactContext } from "./simulation/classify-user-impact"
 export { classifyUserImpact } from "./simulation/classify-user-impact"
 export { compareSimulations } from "./simulation/compare-simulations"
+export { estimateProductionReadiness } from "./simulation/estimate-readiness"
 export type { GoalMeasurements } from "./simulation/evaluate-goals"
 export { evaluateGoals } from "./simulation/evaluate-goals"
+export { runScenarioBatch } from "./simulation/run-scenario-batch"
 export { runSimulation } from "./simulation/run-simulation"
 export { hasCycle } from "./validation/detect-cycles"
 export { validateContracts } from "./validation/validate-contracts"

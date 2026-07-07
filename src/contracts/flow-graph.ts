@@ -56,6 +56,7 @@ export type FlowEdge = {
 }
 
 export type EdgeNetworkPolicy = {
+  presetId?: NetworkPresetId
   sourceRegion: string
   targetRegion: string
   bandwidthMbps: number
@@ -64,6 +65,15 @@ export type EdgeNetworkPolicy = {
   connectionReusePercent: number
   outagePercent: number
 }
+
+export type NetworkPresetId =
+  | "same-availability-zone"
+  | "same-region-cross-zone"
+  | "same-continent"
+  | "cross-continent"
+  | "public-internet-edge"
+  | "private-backbone-regions"
+  | "external-provider-edge"
 
 export type FlowGraph = {
   id: string

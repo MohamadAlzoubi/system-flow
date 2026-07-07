@@ -4,6 +4,7 @@ import type {
   NodeDefinition,
   RuleAcceptance,
 } from "../../contracts"
+import { costQuotaRules } from "./cost-quota-rules"
 import { dataRules } from "./data-rules"
 import { interactionRules } from "./interaction-rules"
 import { messagingRules } from "./messaging-rules"
@@ -37,6 +38,7 @@ export function evaluateRules(
     ...dataRules(context),
     ...operabilityRules(context),
     ...securityRules(context),
+    ...costQuotaRules(context),
   ]
   return findings.sort(
     (left, right) =>

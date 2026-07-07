@@ -34,7 +34,7 @@ type Props = {
 
 export function ResponsibilityForm({ node, boundaries, onSave }: Props) {
   const responsibility = node.responsibility
-  const { register, handleSubmit } = useForm<FormValues>({
+  const { register, handleSubmit, watch } = useForm<FormValues>({
     defaultValues: {
       boundaryId: node.boundaryId ?? "",
       owner: responsibility?.owner ?? "",
@@ -51,11 +51,22 @@ export function ResponsibilityForm({ node, boundaries, onSave }: Props) {
       notes: responsibility?.notes ?? "",
     },
   })
+  const selectedBoundaryId = watch("boundaryId")
+  const selectedBoundary = boundaries.find(
+    (boundary) => boundary.id === selectedBoundaryId,
+  )
+  const selectedRegionCode =
+    selectedBoundary?.kind === "region"
+      ? selectedBoundary.regionCode?.trim() || selectedBoundary.id
+      : undefined
+  const regionBoundaries = boundaries.filter((boundary) => boundary.kind === "region")
+  const otherBoundaries = boundaries.filter((boundary) => boundary.kind !== "region")
 
   const submit = (values: FormValues) => {
     const next: NodeInstance["responsibility"] = {
       owner: values.owner.trim() || undefined,
-      deploymentRegion: values.deploymentRegion.trim() || undefined,
+      deploymentRegion:
+        selectedRegionCode ?? (values.deploymentRegion.trim() || undefined),
       stateful:
         values.stateful === "default" ? undefined : values.stateful === "stateful",
       sourceOfTruth: values.sourceOfTruth || undefined,
@@ -71,14 +82,27 @@ export function ResponsibilityForm({ node, boundaries, onSave }: Props) {
   return (
     <form onSubmit={handleSubmit(submit)}>
       <label htmlFor="responsibility-boundary">
-        Boundary
+        Region or boundary
         <select id="responsibility-boundary" {...register("boundaryId")}>
           <option value="">None</option>
-          {boundaries.map((boundary) => (
-            <option key={boundary.id} value={boundary.id}>
-              {boundary.label} ({boundary.kind})
-            </option>
-          ))}
+          {regionBoundaries.length > 0 && (
+            <optgroup label="Regions">
+              {regionBoundaries.map((boundary) => (
+                <option key={boundary.id} value={boundary.id}>
+                  {boundary.label} ({boundary.regionCode ?? boundary.id})
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {otherBoundaries.length > 0 && (
+            <optgroup label="Other boundaries">
+              {otherBoundaries.map((boundary) => (
+                <option key={boundary.id} value={boundary.id}>
+                  {boundary.label} ({boundary.kind})
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
       </label>
       <label htmlFor="responsibility-owner">
@@ -91,11 +115,20 @@ export function ResponsibilityForm({ node, boundaries, onSave }: Props) {
       </label>
       <label htmlFor="responsibility-region">
         Deployment region
-        <Input
-          id="responsibility-region"
-          placeholder="eu-west, us-east, …"
-          {...register("deploymentRegion")}
-        />
+        {selectedRegionCode ? (
+          <>
+            <Input id="responsibility-region" value={selectedRegionCode} readOnly />
+            <small className="select-hint">
+              Comes from the selected region. Edit the region code in Regions.
+            </small>
+          </>
+        ) : (
+          <Input
+            id="responsibility-region"
+            placeholder="eu-west, us-east, …"
+            {...register("deploymentRegion")}
+          />
+        )}
       </label>
       <label htmlFor="responsibility-stateful">
         State

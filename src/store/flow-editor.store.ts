@@ -16,7 +16,9 @@ import type {
   SimulationResult,
   ValidationIssue,
 } from "../contracts"
+import type { ReviewQuestion } from "../engine"
 import {
+  applyReviewAnswer,
   compareSimulations,
   inferInteractionDefaults,
   nextContractVersion,
@@ -58,11 +60,16 @@ type FlowEditorState = {
     boundaryId: NodeInstance["boundaryId"],
     responsibility: NodeInstance["responsibility"],
   ) => void
+  assignNodeToRegion: (id: string, regionId: string | undefined) => void
   updateNodeStateOwnership: (
     id: string,
     stateOwnership: NodeInstance["stateOwnership"],
   ) => void
   upsertBoundary: (boundary: ArchitectureBoundary) => void
+  setBoundaryCanvasLayout: (
+    id: string,
+    canvasLayout: ArchitectureBoundary["canvasLayout"],
+  ) => void
   removeBoundary: (id: string) => void
   updateEdgeProtection: (id: string, protection: FlowEdge["protection"]) => void
   updateEdgeFailurePolicy: (id: string, failurePolicy: FlowEdge["failurePolicy"]) => void
@@ -75,6 +82,7 @@ type FlowEditorState = {
   removeDecisionRecord: (id: string) => void
   upsertAssumption: (assumption: ArchitectureAssumption) => void
   removeAssumption: (id: string) => void
+  answerReviewQuestion: (question: ReviewQuestion, answer: string) => void
   updateSimulationProfile: (profile: SimulationProfile) => void
   updateArchitectureGoals: (goals: FlowGraph["architectureGoals"]) => void
   updateEdgeNetwork: (id: string, network: FlowEdge["network"]) => void
@@ -96,7 +104,7 @@ type FlowEditorState = {
   ) => void
   removeDataContract: (name: string, version: string) => void
   duplicateDataContract: (name: string, version: string) => void
-  addNode: (type: string, position?: NodeInstance["position"]) => void
+  addNode: (type: string, position?: NodeInstance["position"], regionId?: string) => void
   addEdge: (edge: FlowEdge) => void
   removeNodes: (ids: string[]) => void
   removeEdges: (ids: string[]) => void
@@ -168,25 +176,82 @@ function nextFreePosition(nodes: NodeInstance[]): NodeInstance["position"] {
   return origin
 }
 
+function withNodeDefaults(node: NodeInstance): NodeInstance {
+  const definition = nodeRegistry.get(node.type)
+  if (!definition) return node
+  return {
+    ...node,
+    config: { ...definition.defaultConfig, ...node.config },
+  }
+}
+
+function boundaryRegionCode(
+  boundary: ArchitectureBoundary | undefined,
+): string | undefined {
+  if (boundary?.kind !== "region") return undefined
+  return boundary.regionCode?.trim() || boundary.id
+}
+
+function withoutEmptyResponsibility(
+  responsibility: NodeInstance["responsibility"],
+): NodeInstance["responsibility"] {
+  if (!responsibility) return undefined
+  return Object.values(responsibility).every((value) => value === undefined)
+    ? undefined
+    : responsibility
+}
+
+function responsibilityForBoundary(
+  boundary: ArchitectureBoundary | undefined,
+  responsibility: NodeInstance["responsibility"],
+): NodeInstance["responsibility"] {
+  const regionCode = boundaryRegionCode(boundary)
+  if (!regionCode) return responsibility
+  return { ...responsibility, deploymentRegion: regionCode }
+}
+
+function withMeasurementSources(profile: SimulationProfile): SimulationProfile {
+  return {
+    ...profile,
+    observedLatencySource:
+      profile.observedLatencyMs !== undefined
+        ? (profile.observedLatencySource ?? "unknown")
+        : undefined,
+    observedThroughputSource:
+      profile.observedThroughputPerSecond !== undefined
+        ? (profile.observedThroughputSource ?? "unknown")
+        : undefined,
+  }
+}
+
+export function normalizeFlowGraph(graph: FlowGraph): FlowGraph {
+  const nodes = graph.nodes.map(withNodeDefaults)
+  return {
+    ...graph,
+    nodes,
+    // Graphs saved before interaction types migrate with inferred defaults.
+    edges: graph.edges.map((edge) =>
+      edge.interactionType
+        ? edge
+        : { ...edge, ...inferInteractionDefaults(edge, nodes, nodeRegistry) },
+    ),
+    // Contracts saved as raw schema objects migrate to structured fields.
+    dataContracts: graph.dataContracts.map(normalizeDataContract),
+    // Observations saved before provenance metadata are explicitly unknown.
+    simulationProfile: withMeasurementSources(graph.simulationProfile),
+  }
+}
+
+export function parseFlowGraph(value: unknown): FlowGraph | null {
+  const parsed = savedGraphSchema.safeParse(value)
+  return parsed.success ? normalizeFlowGraph(parsed.data as FlowGraph) : null
+}
+
 function loadSavedGraph(): FlowGraph {
   if (typeof window === "undefined") return productViewedFlow
   try {
     const value: unknown = JSON.parse(window.localStorage.getItem(storageKey) ?? "null")
-    const parsed = savedGraphSchema.safeParse(value)
-    if (parsed.success) {
-      const graph = parsed.data as FlowGraph
-      return {
-        ...graph,
-        // Graphs saved before interaction types migrate with inferred defaults.
-        edges: graph.edges.map((edge) =>
-          edge.interactionType
-            ? edge
-            : { ...edge, ...inferInteractionDefaults(edge, graph.nodes, nodeRegistry) },
-        ),
-        // Contracts saved as raw schema objects migrate to structured fields.
-        dataContracts: graph.dataContracts.map(normalizeDataContract),
-      }
-    }
+    return parseFlowGraph(value) ?? productViewedFlow
   } catch {
     // Ignore invalid or outdated local data and use the bundled example.
   }
@@ -209,7 +274,7 @@ export const useFlowEditorStore = create<FlowEditorState>((set) => ({
   isAnalysisOpen: false,
   setGraph: (graph) =>
     set({
-      graph,
+      graph: normalizeFlowGraph(graph),
       selectedNodeId: null,
       selectedEdgeId: null,
       activeScenarioId: null,
@@ -320,12 +385,72 @@ export const useFlowEditorStore = create<FlowEditorState>((set) => ({
       graph: {
         ...state.graph,
         nodes: state.graph.nodes.map((node) =>
-          node.id === id ? { ...node, boundaryId, responsibility } : node,
+          node.id === id
+            ? {
+                ...node,
+                boundaryId,
+                responsibility: responsibilityForBoundary(
+                  (state.graph.boundaries ?? []).find(
+                    (boundary) => boundary.id === boundaryId,
+                  ),
+                  responsibility,
+                ),
+              }
+            : node,
         ),
       },
+      simulationResult: null,
+      simulationComparison: null,
       validationIssues: [],
       isDirty: true,
     })),
+  assignNodeToRegion: (id, regionId) =>
+    set((state) => {
+      const boundaries = state.graph.boundaries ?? []
+      const nextRegion = boundaries.find(
+        (boundary) => boundary.id === regionId && boundary.kind === "region",
+      )
+      const boundaryById = new Map(boundaries.map((boundary) => [boundary.id, boundary]))
+      return {
+        graph: {
+          ...state.graph,
+          nodes: state.graph.nodes.map((node) => {
+            if (node.id !== id) return node
+            if (nextRegion) {
+              return {
+                ...node,
+                boundaryId: nextRegion.id,
+                responsibility: responsibilityForBoundary(
+                  nextRegion,
+                  node.responsibility,
+                ),
+              }
+            }
+
+            const previousRegionCode = boundaryRegionCode(
+              node.boundaryId ? boundaryById.get(node.boundaryId) : undefined,
+            )
+            const responsibility = {
+              ...node.responsibility,
+              deploymentRegion:
+                previousRegionCode &&
+                node.responsibility?.deploymentRegion === previousRegionCode
+                  ? undefined
+                  : node.responsibility?.deploymentRegion,
+            }
+            return {
+              ...node,
+              boundaryId: undefined,
+              responsibility: withoutEmptyResponsibility(responsibility),
+            }
+          }),
+        },
+        simulationResult: null,
+        simulationComparison: null,
+        validationIssues: [],
+        isDirty: true,
+      }
+    }),
   updateNodeStateOwnership: (id, stateOwnership) =>
     set((state) => ({
       graph: {
@@ -341,33 +466,80 @@ export const useFlowEditorStore = create<FlowEditorState>((set) => ({
     set((state) => {
       const boundaries = state.graph.boundaries ?? []
       const exists = boundaries.some((item) => item.id === boundary.id)
+      const regionCode = boundaryRegionCode(boundary)
       return {
         graph: {
           ...state.graph,
           boundaries: exists
             ? boundaries.map((item) => (item.id === boundary.id ? boundary : item))
             : [...boundaries, boundary],
+          nodes: regionCode
+            ? state.graph.nodes.map((node) =>
+                node.boundaryId === boundary.id
+                  ? {
+                      ...node,
+                      responsibility: {
+                        ...node.responsibility,
+                        deploymentRegion: regionCode,
+                      },
+                    }
+                  : node,
+              )
+            : state.graph.nodes,
         },
+        simulationResult: null,
+        simulationComparison: null,
         validationIssues: [],
         isDirty: true,
       }
     }),
-  removeBoundary: (id) =>
+  setBoundaryCanvasLayout: (id, canvasLayout) =>
     set((state) => ({
       graph: {
         ...state.graph,
-        boundaries: (state.graph.boundaries ?? [])
-          .filter((boundary) => boundary.id !== id)
-          .map((boundary) =>
-            boundary.parentId === id ? { ...boundary, parentId: undefined } : boundary,
-          ),
-        nodes: state.graph.nodes.map((node) =>
-          node.boundaryId === id ? { ...node, boundaryId: undefined } : node,
+        boundaries: (state.graph.boundaries ?? []).map((boundary) =>
+          boundary.id === id ? { ...boundary, canvasLayout } : boundary,
         ),
       },
-      validationIssues: [],
       isDirty: true,
     })),
+  removeBoundary: (id) =>
+    set((state) => {
+      const removed = (state.graph.boundaries ?? []).find(
+        (boundary) => boundary.id === id,
+      )
+      const removedRegionCode = boundaryRegionCode(removed)
+      return {
+        graph: {
+          ...state.graph,
+          boundaries: (state.graph.boundaries ?? [])
+            .filter((boundary) => boundary.id !== id)
+            .map((boundary) =>
+              boundary.parentId === id ? { ...boundary, parentId: undefined } : boundary,
+            ),
+          nodes: state.graph.nodes.map((node) => {
+            if (node.boundaryId !== id) return node
+            const responsibility = {
+              ...node.responsibility,
+              deploymentRegion:
+                removedRegionCode &&
+                node.responsibility?.deploymentRegion === removedRegionCode
+                  ? undefined
+                  : node.responsibility?.deploymentRegion,
+            }
+            return {
+              ...node,
+              boundaryId: undefined,
+              responsibility: withoutEmptyResponsibility(responsibility),
+            }
+          }),
+        },
+        simulationResult: null,
+        simulationComparison: null,
+        validationIssues: [],
+        isDirty: true,
+      }
+    }),
   updateEdgeProtection: (id, protection) =>
     set((state) => ({
       graph: {
@@ -528,6 +700,14 @@ export const useFlowEditorStore = create<FlowEditorState>((set) => ({
       validationIssues: [],
       isDirty: true,
     })),
+  answerReviewQuestion: (question, answer) =>
+    set((state) => ({
+      graph: applyReviewAnswer(state.graph, question, answer),
+      simulationResult: null,
+      simulationComparison: null,
+      validationIssues: [],
+      isDirty: true,
+    })),
   updateEdgeContract: (id, dataType, dataTypeVersion) =>
     set((state) => ({
       graph: {
@@ -602,11 +782,14 @@ export const useFlowEditorStore = create<FlowEditorState>((set) => ({
         isDirty: true,
       }
     }),
-  addNode: (type, position) =>
+  addNode: (type, position, regionId) =>
     set((state) => {
       const definition = nodeRegistry.get(type)
       if (!definition) return state
       const id = `${type}-${crypto.randomUUID()}`
+      const region = (state.graph.boundaries ?? []).find(
+        (boundary) => boundary.id === regionId && boundary.kind === "region",
+      )
       return {
         graph: {
           ...state.graph,
@@ -617,6 +800,8 @@ export const useFlowEditorStore = create<FlowEditorState>((set) => ({
               type,
               position: position ?? nextFreePosition(state.graph.nodes),
               config: { ...definition.defaultConfig },
+              boundaryId: region?.id,
+              responsibility: responsibilityForBoundary(region, undefined),
             },
           ],
         },

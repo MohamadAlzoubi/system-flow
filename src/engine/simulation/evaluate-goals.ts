@@ -17,6 +17,9 @@ export type GoalMeasurements = {
   lostEvents: number
   /** Product of node availabilities across the flow. */
   availabilityPercent: number
+  recoveryTimeSeconds?: number
+  recoveryPointSeconds?: number
+  dataStalenessMs?: number
 }
 
 const goalLabels: Record<keyof ArchitectureGoals, string> = {
@@ -123,17 +126,47 @@ export function evaluateGoals(
     })
   }
 
-  const notYetMeasurable = (goal: keyof ArchitectureGoals, reason: string) => {
-    if (goals[goal] === undefined) {
+  const evaluateEstimatedMaximum = (
+    goal:
+      | "maximumRecoveryTimeSeconds"
+      | "maximumRecoveryPointSeconds"
+      | "maximumDataStalenessMs",
+    actual: number | undefined,
+    unit: string,
+    missingReason: string,
+  ) => {
+    const target = goals[goal]
+    if (target === undefined) {
       openQuestion(goal)
       return
     }
+    if (actual === undefined) {
+      evaluations.push({
+        goal,
+        label: goalLabels[goal],
+        status: "not-evaluated",
+        target,
+        unit,
+        reason: missingReason,
+      })
+      return
+    }
+    assumptions.add(
+      "Recovery and freshness values are deterministic architecture estimates, not production predictions.",
+    )
+    const passed = actual <= target
     evaluations.push({
       goal,
       label: goalLabels[goal],
-      status: "not-evaluated",
-      target: typeof goals[goal] === "number" ? (goals[goal] as number) : undefined,
-      reason,
+      status: passed ? "passed" : "failed",
+      target,
+      actual: round(actual),
+      unit,
+      safetyMarginPercent:
+        target > 0 ? round(((target - actual) / target) * 100) : undefined,
+      reason: passed
+        ? `Estimated ${round(actual)} ${unit} stays within the ${target} ${unit} limit.`
+        : `Estimated ${round(actual)} ${unit} exceeds the ${target} ${unit} limit.`,
     })
   }
 
@@ -183,17 +216,23 @@ export function evaluateGoals(
     "events",
   )
 
-  notYetMeasurable(
+  evaluateEstimatedMaximum(
     "maximumRecoveryTimeSeconds",
-    "The simulator does not yet measure recovery time. Keep this goal as an open question until failure scenarios are simulated over time.",
+    measurements.recoveryTimeSeconds,
+    "seconds",
+    "No timed failure or recovery policy was simulated, so recovery time cannot be estimated.",
   )
-  notYetMeasurable(
+  evaluateEstimatedMaximum(
     "maximumRecoveryPointSeconds",
-    "The simulator does not yet measure how much work is lost during recovery. Keep this goal as an open question until failure scenarios are simulated over time.",
+    measurements.recoveryPointSeconds,
+    "seconds",
+    "No failure context with measurable source traffic was simulated, so a recovery point cannot be estimated.",
   )
-  notYetMeasurable(
+  evaluateEstimatedMaximum(
     "maximumDataStalenessMs",
-    "Data freshness is not yet modeled. Keep this goal as an open question until read paths declare their staleness behavior.",
+    measurements.dataStalenessMs,
+    "ms",
+    "No cache TTL, replica lag, processing lag, queue age, or cross-region transfer delay is configured.",
   )
 
   if (goals.orderingRequirement !== "none") {

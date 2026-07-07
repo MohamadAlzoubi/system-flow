@@ -173,4 +173,76 @@ describe("validateOwnership", () => {
       expect.objectContaining({ code: "UNKNOWN_BOUNDARY", nodeId: graph.nodes[0].id }),
     )
   })
+
+  it("rejects duplicate region codes", () => {
+    const graph = structuredClone(productViewedFlow)
+    graph.boundaries = [
+      { id: "region-a", label: "US primary", kind: "region", regionCode: "us-east-1" },
+      { id: "region-b", label: "US shadow", kind: "region", regionCode: "us-east-1" },
+    ]
+
+    expect(validateOwnership(graph, nodeRegistry)).toContainEqual(
+      expect.objectContaining({ code: "DUPLICATE_REGION_CODE", severity: "error" }),
+    )
+  })
+
+  it("warns when node region placement disagrees with deployment region", () => {
+    const graph = structuredClone(productViewedFlow)
+    graph.boundaries = [
+      { id: "region-us", label: "US East", kind: "region", regionCode: "us-east-1" },
+    ]
+    graph.nodes[0].boundaryId = "region-us"
+    graph.nodes[0].responsibility = {
+      deploymentRegion: "eu-west-1",
+    }
+
+    expect(validateOwnership(graph, nodeRegistry)).toContainEqual(
+      expect.objectContaining({
+        code: "REGION_ASSIGNMENT_MISMATCH",
+        nodeId: graph.nodes[0].id,
+      }),
+    )
+  })
+
+  it("derives deployment regions through nested boundaries", () => {
+    const graph = structuredClone(productViewedFlow)
+    const worker = nodeOfType(graph, "worker")
+    const database = nodeOfType(graph, "database")
+    graph.boundaries = [
+      {
+        id: "region-eu",
+        label: "EU",
+        kind: "region",
+        regionCode: "eu-west-1",
+      },
+      {
+        id: "zone-eu-a",
+        label: "EU zone A",
+        kind: "availability-zone",
+        parentId: "region-eu",
+      },
+      {
+        id: "region-us",
+        label: "US",
+        kind: "region",
+        regionCode: "us-east-1",
+      },
+    ]
+    worker.boundaryId = "zone-eu-a"
+    worker.responsibility = { owner: "worker-team" }
+    database.boundaryId = "region-us"
+    database.responsibility = { owner: "data-team" }
+    const edge = graph.edges.find(
+      (item) => item.fromNodeId === worker.id && item.toNodeId === database.id,
+    )
+    if (!edge) throw new Error("Fixture requires worker → database edge")
+    edge.network = undefined
+
+    expect(validateOwnership(graph, nodeRegistry)).toContainEqual(
+      expect.objectContaining({
+        code: "CROSS_REGION_STATE",
+        edgeId: edge.id,
+      }),
+    )
+  })
 })

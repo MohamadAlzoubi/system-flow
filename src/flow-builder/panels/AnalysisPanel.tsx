@@ -1,12 +1,16 @@
-import { Activity, BookmarkPlus, Pause, Play, X } from "lucide-react"
-import { useEffect, useState } from "react"
+import { Activity, BookmarkPlus, Download, Pause, Play, X } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
 import type {
   GoalReport,
   MetricDelta,
+  ProductionReadinessMetrics,
   UserImpactEntry,
   UserImpactOutcome,
 } from "../../contracts"
+import { evaluateRules } from "../../engine"
+import { nodeRegistry } from "../../node-registry"
 import { useFlowEditorStore } from "../../store/flow-editor.store"
+import { buildSimulationAnalysisExport } from "./analysis-export"
 
 const impactLabels: Record<UserImpactOutcome, string> = {
   "rejected-immediately": "Rejected immediately",
@@ -106,6 +110,54 @@ function GoalReportSection({ report }: { report: GoalReport }) {
   )
 }
 
+function ReadinessSection({ readiness }: { readiness: ProductionReadinessMetrics }) {
+  const metrics = [
+    {
+      label: "RTO",
+      value: readiness.recoveryTimeSeconds,
+      unit: "seconds",
+    },
+    {
+      label: "RPO",
+      value: readiness.recoveryPointSeconds,
+      unit: "seconds",
+    },
+    {
+      label: "Staleness",
+      value: readiness.dataStalenessMs,
+      unit: "ms",
+    },
+  ]
+  if (metrics.every((metric) => metric.value === undefined)) return null
+
+  return (
+    <div className="readiness-metrics">
+      <strong>Recovery and freshness</strong>
+      <div className="readiness-values">
+        {metrics.map((metric) => (
+          <span key={metric.label}>
+            <b>{metric.label}</b>
+            {metric.value === undefined
+              ? "Not evaluated"
+              : `${metric.value.toLocaleString()} ${metric.unit}`}
+          </span>
+        ))}
+      </div>
+      <div className="readiness-evidence">
+        {readiness.evidence.map((item, index) => (
+          <small
+            key={`${item.metric}-${item.source}-${item.nodeId ?? item.edgeId ?? index}`}
+            title={item.reason}
+          >
+            {item.source}: {item.value.toLocaleString()} {item.unit}
+            {item.role === "constraint" ? " limit" : ""}
+          </small>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function Delta({
   label,
   value,
@@ -156,6 +208,13 @@ export function AnalysisPanel() {
   const highImpactAssumptions = (graph.assumptions ?? []).filter(
     (assumption) => assumption.impact === "high" && assumption.status === "unverified",
   )
+  const costQuotaRisks = useMemo(
+    () =>
+      evaluateRules(graph, nodeRegistry).filter(
+        (finding) => finding.category === "cost" || finding.category === "quota",
+      ),
+    [graph],
+  )
   const [playing, setPlaying] = useState(false)
   const duration = result?.timeline.at(-1)?.timeSeconds ?? 0
   const queueAgeSeries =
@@ -173,6 +232,30 @@ export function AnalysisPanel() {
       rate: frame.sourceRatePerSecond,
     })) ?? []
   const maximumTrafficRate = Math.max(1, ...trafficSeries.map((point) => point.rate))
+
+  const exportAnalysisJson = () => {
+    if (!result) return
+    const payload = buildSimulationAnalysisExport({
+      graph,
+      result,
+      visibleIssues: issues,
+      scenario: activeScenario ?? null,
+      baseline,
+      comparison,
+      riskFindings: costQuotaRisks,
+    })
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement("a")
+    anchor.href = url
+    anchor.download = activeScenario
+      ? `${graph.id}-${activeScenario.id}-analysis.json`
+      : `${graph.id}-analysis.json`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
 
   useEffect(() => {
     if (!playing || !result) return
@@ -210,6 +293,16 @@ export function AnalysisPanel() {
           <Activity size={16} />
           <strong id="analysis-title">Simulation analysis</strong>
           <span>{issues.length} issues</span>
+          {result && (
+            <button
+              className="baseline-action"
+              type="button"
+              onClick={exportAnalysisJson}
+              title="Export simulation analysis JSON"
+            >
+              <Download size={13} /> Export JSON
+            </button>
+          )}
           <button
             className="modal-close"
             type="button"
@@ -259,6 +352,7 @@ export function AnalysisPanel() {
               </b>
             </div>
             {result.goalReport && <GoalReportSection report={result.goalReport} />}
+            <ReadinessSection readiness={result.readiness} />
             {result.userImpact.length > 0 && (
               <UserImpactSection entries={result.userImpact} />
             )}
@@ -267,6 +361,17 @@ export function AnalysisPanel() {
                 <strong>Unverified high-impact assumptions</strong>
                 {highImpactAssumptions.map((assumption) => (
                   <span key={assumption.id}>{assumption.statement}</span>
+                ))}
+              </div>
+            )}
+            {costQuotaRisks.length > 0 && (
+              <div className="cost-quota-risks">
+                <strong>Cost and quota risks</strong>
+                {costQuotaRisks.map((finding) => (
+                  <span key={`${finding.code}-${finding.affectedIds.join("-")}`}>
+                    <b>{finding.category}</b>
+                    {finding.message}
+                  </span>
                 ))}
               </div>
             )}
@@ -326,6 +431,19 @@ export function AnalysisPanel() {
               </span>
               <span>{result.explanation.confidenceReasons[0]}</span>
             </div>
+            {result.explanation.calibrationEvidence.length > 0 && (
+              <div className="calibration-evidence">
+                <strong>Calibration evidence</strong>
+                {result.explanation.calibrationEvidence.map((evidence) => (
+                  <span key={evidence.metric}>
+                    <b>{evidence.metric}</b>
+                    {evidence.observedValue.toLocaleString()} {evidence.unit} ·{" "}
+                    {evidence.source} · {evidence.quality} · factor{" "}
+                    {evidence.calibrationFactor}
+                  </span>
+                ))}
+              </div>
+            )}
             {trafficSeries.length > 1 && maximumTrafficRate > 1 && (
               <div
                 className="message-age-chart traffic-chart"

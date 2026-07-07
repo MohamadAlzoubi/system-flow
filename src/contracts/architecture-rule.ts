@@ -5,6 +5,8 @@ export type RuleCategory =
   | "state"
   | "security"
   | "operability"
+  | "cost"
+  | "quota"
 
 export type RuleSeverity = "error" | "warning" | "question"
 

@@ -14,6 +14,42 @@ export function validateFlow(
   const issues: ValidationIssue[] = []
   const nodeIds = new Set<string>()
   const edgeIds = new Set<string>()
+  const measurementSources = new Set([
+    "assumed",
+    "load-test",
+    "production",
+    "vendor-doc",
+    "unknown",
+  ])
+  const measurements = [
+    {
+      label: "Observed latency",
+      value: graph.simulationProfile.observedLatencyMs,
+      source: graph.simulationProfile.observedLatencySource,
+    },
+    {
+      label: "Observed throughput",
+      value: graph.simulationProfile.observedThroughputPerSecond,
+      source: graph.simulationProfile.observedThroughputSource,
+    },
+  ]
+
+  for (const measurement of measurements) {
+    if (measurement.value !== undefined && measurement.source === undefined) {
+      issues.push({
+        severity: "error",
+        code: "MISSING_MEASUREMENT_SOURCE",
+        message: `${measurement.label} requires a measurement source`,
+      })
+    }
+    if (measurement.source !== undefined && !measurementSources.has(measurement.source)) {
+      issues.push({
+        severity: "error",
+        code: "INVALID_MEASUREMENT_SOURCE",
+        message: `${measurement.label} has an unsupported measurement source`,
+      })
+    }
+  }
 
   for (const node of graph.nodes) {
     if (nodeIds.has(node.id)) {

@@ -3,6 +3,7 @@ import type {
   Blueprint,
   BlueprintComponent,
   BlueprintContract,
+  BlueprintHandoff,
   BlueprintPhase,
   DataContract,
   FlowEdge,
@@ -11,8 +12,10 @@ import type {
   NodeDefinition,
   NodeInstance,
   NodeSimulationMetrics,
+  SimulationResult,
 } from "../../contracts"
 import { contractVersions, resolveEdgeContract } from "../contracts/contract-versions"
+import { deploymentRegionOf } from "../graph/resolve-region"
 import { evaluateRules, findAcceptance } from "../rules/evaluate-rules"
 import { runSimulation } from "../simulation/run-simulation"
 import { validateFlow } from "../validation/validate-flow"
@@ -416,7 +419,137 @@ function riskGroups(
       .filter((record) => record.status === "proposed")
       .map((record) => record.title),
   )
+  push(
+    "Cost and quota risks",
+    findings
+      .filter((finding) => finding.category === "cost" || finding.category === "quota")
+      .map(
+        (finding) =>
+          `[${finding.category}] ${finding.message}${
+            finding.affectedIds.length > 0 ? ` (${finding.affectedIds.join(", ")})` : ""
+          }`,
+      ),
+  )
   return groups
+}
+
+function handoffPack(
+  graph: FlowGraph,
+  registry: ReadonlyMap<string, NodeDefinition>,
+  result: SimulationResult,
+  findings: ArchitectureRule[],
+  sequence: BlueprintPhase[],
+): BlueprintHandoff {
+  const boundaries = new Map(
+    (graph.boundaries ?? []).map((boundary) => [boundary.id, boundary]),
+  )
+  const regionalTopology = (graph.boundaries ?? [])
+    .filter((boundary) => boundary.kind === "region")
+    .map((region) => {
+      const code = region.regionCode?.trim() || region.id
+      const members = graph.nodes
+        .filter((node) => deploymentRegionOf(node, boundaries) === code)
+        .map((node) => node.id)
+      return `${region.label} (${code}), owner ${region.owner ?? "unassigned"}: ${members.join(", ") || "no assigned nodes"}`
+    })
+
+  const criticalAssumptions = (graph.assumptions ?? []).map(
+    (assumption) =>
+      `${assumption.id} [${assumption.status}, ${assumption.impact} impact]: ${assumption.statement}${
+        assumption.relatedIds.length > 0
+          ? `; relates to ${assumption.relatedIds.join(", ")}`
+          : ""
+      }`,
+  )
+  const decisions = (graph.decisionRecords ?? []).map(
+    (record) => `${record.id} [${record.status}]: ${record.title} — ${record.decision}`,
+  )
+  const implementationTasks = [
+    ...graph.nodes.map(
+      (node) =>
+        `Implement ${registry.get(node.type)?.label ?? node.type} as ${node.id}; owner ${node.responsibility?.owner ?? boundaryOwner(graph, node) ?? "unassigned"}`,
+    ),
+    ...graph.edges.map(
+      (edge) =>
+        `Integrate edge ${edge.id}: ${edge.fromNodeId} → ${edge.toNodeId} carrying ${edge.dataType} via ${edge.interactionType}`,
+    ),
+    ...findings.flatMap((finding) =>
+      finding.suggestedActions
+        .slice(0, 1)
+        .map(
+          (action) =>
+            `${action} [${finding.code}${finding.affectedIds.length > 0 ? `: ${finding.affectedIds.join(", ")}` : ""}]`,
+        ),
+    ),
+  ]
+
+  const loadTestPlan = [
+    `Run ${graph.simulationProfile.durationSeconds}s at ${graph.simulationProfile.requestsPerSecond.toLocaleString()} events/s using the ${graph.simulationProfile.trafficPattern} traffic pattern.`,
+    ...(graph.architectureGoals?.peakTrafficPerSecond !== undefined
+      ? [
+          `Prove sustained peak capacity at ${graph.architectureGoals.peakTrafficPerSecond.toLocaleString()} events/s.`,
+        ]
+      : ["Decide and record the required peak traffic before load testing."]),
+    `Use ${graph.simulationProfile.payloadSizeBytes ?? 1200}-byte payloads and record CPU, memory, latency, drops, queue age, and provider rejections.`,
+    ...result.bottlenecks.map(
+      (issue) =>
+        `Exercise bottleneck ${issue.nodeId ?? issue.edgeId ?? issue.code}: ${issue.message}`,
+    ),
+  ]
+
+  const chaosTestPlan = (graph.failureScenarios ?? []).map((scenario) => {
+    const scenarioResult = runSimulation(graph, registry, scenario)
+    const affected = [...scenario.affectedNodeIds, ...scenario.affectedBoundaryIds].join(
+      ", ",
+    )
+    const estimatedRto = scenarioResult.readiness.recoveryTimeSeconds
+    return `${scenario.id} (${scenario.kind}) targets ${affected || "flow-wide behavior"}; expected impact: ${scenario.expectedUserImpact ?? "not recorded"}; estimated RTO: ${estimatedRto === undefined ? "not evaluated" : `${estimatedRto}s`}; recovery: ${scenario.recoveryBehavior ?? "not recorded"}`
+  })
+
+  const observabilityChecklist = [
+    "Emit request/event rate, error rate, and latency for every synchronous component.",
+    "Emit queue depth, oldest-message age, expiration, dead-letter, and drain rate for every queue.",
+    "Emit datastore connection, IOPS, replica lag, and failover state.",
+    "Tag traces and logs with contract version, correlation key, region, scenario, and node id.",
+    ...Object.entries(graph.architectureGoals ?? {})
+      .filter(([key]) => key !== "orderingRequirement")
+      .map(([key, value]) => `Dashboard and alert on ${key} against target ${value}.`),
+  ]
+
+  const runbookOutline = [
+    ...graph.nodes
+      .filter((node) => node.responsibility?.owner)
+      .map(
+        (node) =>
+          `${node.id}: page ${node.responsibility?.owner}; verify capacity, dependencies, and regional placement.`,
+      ),
+    ...graph.edges
+      .filter((edge) => edge.failurePolicy !== undefined)
+      .map(
+        (edge) =>
+          `${edge.id}: when ${edge.toNodeId} fails, execute ${edge.failurePolicy?.action} policy and verify its retry/fallback budget.`,
+      ),
+    ...(graph.failureScenarios ?? []).map(
+      (scenario) =>
+        `${scenario.name}: detect, contain, communicate user impact, execute recovery, and verify ${scenario.recoveryBehavior ?? "normal service restoration"}.`,
+    ),
+  ]
+
+  const rolloutSequence = sequence.map(
+    (phase) => `Phase ${phase.step} — ${phase.title}: ${phase.items.join(", ")}`,
+  )
+
+  return {
+    regionalTopology,
+    criticalAssumptions,
+    decisions,
+    implementationTasks,
+    loadTestPlan,
+    chaosTestPlan,
+    observabilityChecklist,
+    runbookOutline,
+    rolloutSequence,
+  }
 }
 
 export function generateBlueprint(
@@ -473,6 +606,7 @@ export function generateBlueprint(
     (boundary) =>
       `${boundary.label} (${boundary.kind}${boundary.owner ? `, owned by ${boundary.owner}` : ""})`,
   )
+  const sequence = developmentSequence(graph, registry)
 
   return {
     name: graph.name,
@@ -482,8 +616,9 @@ export function generateBlueprint(
     ),
     contracts: contractSummaries(graph),
     reliability: reliabilityPlan(graph),
-    developmentSequence: developmentSequence(graph, registry),
+    developmentSequence: sequence,
     testPlan: testPlan(graph, registry),
     risks: riskGroups(graph, registry, findings, result.goalReport),
+    handoff: handoffPack(graph, registry, result, findings, sequence),
   }
 }

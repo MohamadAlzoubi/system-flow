@@ -12,9 +12,9 @@ const schema = z.object({
   maximumP95LatencyMs: z.number().positive().optional(),
   minimumAvailabilityPercent: z.number().min(0).max(100).optional(),
   maximumDataLossEvents: z.number().nonnegative().optional(),
-  maximumRecoveryTimeSeconds: z.number().positive().optional(),
-  maximumRecoveryPointSeconds: z.number().positive().optional(),
-  maximumDataStalenessMs: z.number().positive().optional(),
+  maximumRecoveryTimeSeconds: z.number().nonnegative().optional(),
+  maximumRecoveryPointSeconds: z.number().nonnegative().optional(),
+  maximumDataStalenessMs: z.number().nonnegative().optional(),
   orderingRequirement: z.enum(["none", "per-key", "global"]),
 })
 

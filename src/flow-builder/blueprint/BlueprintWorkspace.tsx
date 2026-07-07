@@ -11,7 +11,7 @@ import {
 import { nodeRegistry } from "../../node-registry"
 import { useFlowEditorStore } from "../../store/flow-editor.store"
 
-function download(filename: string, content: string, type: string) {
+function downloadInBrowser(filename: string, content: string, type: string) {
   const blob = new Blob([content], { type })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement("a")
@@ -19,6 +19,20 @@ function download(filename: string, content: string, type: string) {
   anchor.download = filename
   anchor.click()
   URL.revokeObjectURL(url)
+}
+
+async function exportFile(filename: string, content: string, type: string) {
+  try {
+    const response = await fetch("/__system-flow/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename, content }),
+    })
+    if (response.ok) return
+  } catch {
+    // Production builds do not expose the dev-server file writer.
+  }
+  downloadInBrowser(filename, content, type)
 }
 
 type Props = {
@@ -49,12 +63,14 @@ export function BlueprintWorkspace({ onClose }: Props) {
         aria-labelledby="blueprint-title"
       >
         <div className="results-head">
-          <strong id="blueprint-title">Implementation blueprint</strong>
+          <strong id="blueprint-title">Production readiness pack</strong>
           <span>{blueprint.components.length} components</span>
           <div className="blueprint-actions">
             <Button
               variant="outline"
-              onClick={() => download(`${slug}-blueprint.md`, markdown, "text/markdown")}
+              onClick={() =>
+                void exportFile(`${slug}-readiness-pack.md`, markdown, "text/markdown")
+              }
             >
               <Download size={14} />
               Markdown
@@ -62,8 +78,8 @@ export function BlueprintWorkspace({ onClose }: Props) {
             <Button
               variant="outline"
               onClick={() =>
-                download(
-                  `${slug}-blueprint.html`,
+                void exportFile(
+                  `${slug}-readiness-pack.html`,
                   renderBlueprintHtml(blueprint),
                   "text/html",
                 )
@@ -75,7 +91,20 @@ export function BlueprintWorkspace({ onClose }: Props) {
             <Button
               variant="outline"
               onClick={() =>
-                download(
+                void exportFile(
+                  `${slug}-readiness-pack.json`,
+                  JSON.stringify(blueprint, null, 2),
+                  "application/json",
+                )
+              }
+            >
+              <Download size={14} />
+              Pack JSON
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() =>
+                void exportFile(
                   `${slug}.json`,
                   JSON.stringify(graph, null, 2),
                   "application/json",

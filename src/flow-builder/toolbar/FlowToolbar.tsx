@@ -7,13 +7,16 @@ import {
   FileJson2,
   FilePlus2,
   FileText,
+  FlaskConical,
+  Globe2,
   GraduationCap,
   PanelRight,
   Play,
   Trash2,
+  Upload,
   Workflow,
 } from "lucide-react"
-import { useState } from "react"
+import { type ChangeEvent, useRef, useState } from "react"
 import { Button } from "../../components/ui/button"
 import { runSimulation, validateFlow } from "../../engine"
 import {
@@ -23,11 +26,13 @@ import {
   purchaseFlow,
 } from "../../examples"
 import { nodeRegistry } from "../../node-registry"
-import { useFlowEditorStore } from "../../store/flow-editor.store"
+import { parseFlowGraph, useFlowEditorStore } from "../../store/flow-editor.store"
 import { BlueprintWorkspace } from "../blueprint/BlueprintWorkspace"
 import { ContractWorkspace } from "../contracts/ContractWorkspace"
 import { DecisionsWorkspace } from "../decisions/DecisionsWorkspace"
+import { RegionsWorkspace } from "../regions/RegionsWorkspace"
 import { ReviewPanel } from "../review/ReviewPanel"
+import { ScenarioLab } from "../scenario-lab/ScenarioLab"
 import { NewFlowDialog } from "./NewFlowDialog"
 
 const examples = [productViewedFlow, purchaseFlow, chatMessageFlow, bottleneckFlow]
@@ -47,9 +52,12 @@ export function FlowToolbar() {
   const setAnalysisOpen = useFlowEditorStore((state) => state.setAnalysisOpen)
   const [isNewFlowOpen, setNewFlowOpen] = useState(false)
   const [isContractsOpen, setContractsOpen] = useState(false)
+  const [isRegionsOpen, setRegionsOpen] = useState(false)
+  const [isScenarioLabOpen, setScenarioLabOpen] = useState(false)
   const [isReviewOpen, setReviewOpen] = useState(false)
   const [isDecisionsOpen, setDecisionsOpen] = useState(false)
   const [isBlueprintOpen, setBlueprintOpen] = useState(false)
+  const importInputRef = useRef<HTMLInputElement>(null)
   const activeScenarioId = useFlowEditorStore((state) => state.activeScenarioId)
   const activeScenario = graph.failureScenarios?.find(
     (scenario) => scenario.id === activeScenarioId,
@@ -65,6 +73,26 @@ export function FlowToolbar() {
     anchor.download = `${graph.id}.json`
     anchor.click()
     URL.revokeObjectURL(url)
+  }
+
+  const importFlow = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0]
+    event.currentTarget.value = ""
+    if (!file) return
+
+    try {
+      const parsed = parseFlowGraph(JSON.parse(await file.text()))
+      if (!parsed) {
+        window.alert("That file is not a valid System Flow project JSON.")
+        return
+      }
+      setGraph(parsed)
+      setIssues(validateFlow(parsed, nodeRegistry))
+      setResult(null)
+      setAnalysisOpen(false)
+    } catch {
+      window.alert("Could not import the selected JSON file.")
+    }
   }
 
   return (
@@ -124,6 +152,14 @@ export function FlowToolbar() {
         </Button>
         <Button
           variant="outline"
+          onClick={() => setRegionsOpen(true)}
+          title="Create regions and assign nodes"
+        >
+          <Globe2 size={16} />
+          Regions
+        </Button>
+        <Button
+          variant="outline"
           onClick={() => setReviewOpen(true)}
           title="Run the architecture review"
         >
@@ -141,10 +177,10 @@ export function FlowToolbar() {
         <Button
           variant="outline"
           onClick={() => setBlueprintOpen(true)}
-          title="Generate the implementation blueprint"
+          title="Generate the production readiness handoff pack"
         >
           <FileText size={16} />
-          Blueprint
+          Handoff pack
         </Button>
         <Button
           variant="outline"
@@ -161,6 +197,14 @@ export function FlowToolbar() {
         >
           <BarChart3 size={16} />
           Analysis
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => setScenarioLabOpen(true)}
+          title="Compare normal operation and failure scenarios"
+        >
+          <FlaskConical size={16} />
+          Scenario Lab
         </Button>
         <Button
           className="delete-action"
@@ -190,6 +234,23 @@ export function FlowToolbar() {
           Export
         </Button>
         <Button
+          variant="outline"
+          onClick={() => importInputRef.current?.click()}
+          title="Import a System Flow project JSON"
+        >
+          <Upload size={16} />
+          Import
+        </Button>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept="application/json,.json"
+          hidden
+          onChange={(event) => {
+            void importFlow(event)
+          }}
+        />
+        <Button
           onClick={() => {
             const result = runSimulation(graph, nodeRegistry, activeScenario)
             setIssues(result.warnings)
@@ -208,6 +269,8 @@ export function FlowToolbar() {
       </div>
       {isNewFlowOpen && <NewFlowDialog onClose={() => setNewFlowOpen(false)} />}
       {isContractsOpen && <ContractWorkspace onClose={() => setContractsOpen(false)} />}
+      {isRegionsOpen && <RegionsWorkspace onClose={() => setRegionsOpen(false)} />}
+      {isScenarioLabOpen && <ScenarioLab onClose={() => setScenarioLabOpen(false)} />}
       {isReviewOpen && <ReviewPanel onClose={() => setReviewOpen(false)} />}
       {isDecisionsOpen && <DecisionsWorkspace onClose={() => setDecisionsOpen(false)} />}
       {isBlueprintOpen && <BlueprintWorkspace onClose={() => setBlueprintOpen(false)} />}

@@ -4,23 +4,64 @@ import { Button } from "../../components/ui/button"
 import { Input } from "../../components/ui/input"
 import type { SimulationProfile } from "../../contracts"
 
-const schema = z.object({
-  durationSeconds: z.number().int().min(1).max(86400),
-  requestsPerSecond: z.number().min(0),
-  trafficPattern: z.enum(["steady", "burst", "daily-peak", "random"]),
-  cpuCores: z.number().positive(),
-  memoryMb: z.number().positive(),
-  networkLatencyMs: z.number().min(0),
-  observedLatencyMs: z.number().positive().optional(),
-  observedThroughputPerSecond: z.number().positive().optional(),
-  peakRequestsPerSecond: z.number().nonnegative().optional(),
-  burstDurationSeconds: z.number().nonnegative().optional(),
-  rampUpSeconds: z.number().nonnegative().optional(),
-  burstStartSeconds: z.number().nonnegative().optional(),
-  payloadSizeBytes: z.number().positive().optional(),
-  duplicateEventPercent: z.number().min(0).max(100).optional(),
-  malformedEventPercent: z.number().min(0).max(100).optional(),
-})
+const measurementSourceSchema = z.enum([
+  "assumed",
+  "load-test",
+  "production",
+  "vendor-doc",
+  "unknown",
+])
+
+const schema = z
+  .object({
+    durationSeconds: z.number().int().min(1).max(86400),
+    requestsPerSecond: z.number().min(0),
+    trafficPattern: z.enum(["steady", "burst", "daily-peak", "random"]),
+    cpuCores: z.number().positive(),
+    memoryMb: z.number().positive(),
+    networkLatencyMs: z.number().min(0),
+    observedLatencyMs: z.number().positive().optional(),
+    observedLatencySource: measurementSourceSchema.optional(),
+    observedThroughputPerSecond: z.number().positive().optional(),
+    observedThroughputSource: measurementSourceSchema.optional(),
+    peakRequestsPerSecond: z.number().nonnegative().optional(),
+    burstDurationSeconds: z.number().nonnegative().optional(),
+    rampUpSeconds: z.number().nonnegative().optional(),
+    burstStartSeconds: z.number().nonnegative().optional(),
+    payloadSizeBytes: z.number().positive().optional(),
+    duplicateEventPercent: z.number().min(0).max(100).optional(),
+    malformedEventPercent: z.number().min(0).max(100).optional(),
+  })
+  .superRefine((values, context) => {
+    if (
+      values.observedLatencyMs !== undefined &&
+      values.observedLatencySource === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["observedLatencySource"],
+        message: "Choose where this latency value came from.",
+      })
+    }
+    if (
+      values.observedThroughputPerSecond !== undefined &&
+      values.observedThroughputSource === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["observedThroughputSource"],
+        message: "Choose where this throughput value came from.",
+      })
+    }
+  })
+
+const measurementSourceOptions = [
+  ["assumed", "Assumed estimate"],
+  ["load-test", "Controlled load test"],
+  ["production", "Production telemetry"],
+  ["vendor-doc", "Vendor documentation"],
+  ["unknown", "Unknown or imported"],
+] as const
 
 type Props = {
   profile: SimulationProfile
@@ -39,8 +80,19 @@ export function SimulationProfileForm({ profile, onSave }: Props) {
   })
   const submit = (values: SimulationProfile) => {
     const result = schema.safeParse(values)
-    if (result.success) onSave(result.data)
-    else {
+    if (result.success) {
+      onSave({
+        ...result.data,
+        observedLatencySource:
+          result.data.observedLatencyMs === undefined
+            ? undefined
+            : result.data.observedLatencySource,
+        observedThroughputSource:
+          result.data.observedThroughputPerSecond === undefined
+            ? undefined
+            : result.data.observedThroughputSource,
+      })
+    } else {
       for (const issue of result.error.issues) {
         const field = issue.path[0]
         if (typeof field === "string") {
@@ -205,6 +257,25 @@ export function SimulationProfileForm({ profile, onSave }: Props) {
           })}
         />
       </label>
+      <label htmlFor="profile-observed-latency-source">
+        Latency measurement source
+        <select
+          id="profile-observed-latency-source"
+          {...register("observedLatencySource", {
+            setValueAs: (value) => (value === "" ? undefined : value),
+          })}
+        >
+          <option value="">Select source…</option>
+          {measurementSourceOptions.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+        {errors.observedLatencySource && (
+          <small className="field-error">{errors.observedLatencySource.message}</small>
+        )}
+      </label>
       <label htmlFor="profile-observed-throughput">
         Observed throughput (/s, optional)
         <Input
@@ -214,6 +285,25 @@ export function SimulationProfileForm({ profile, onSave }: Props) {
             setValueAs: (value) => (value === "" ? undefined : Number(value)),
           })}
         />
+      </label>
+      <label htmlFor="profile-observed-throughput-source">
+        Throughput measurement source
+        <select
+          id="profile-observed-throughput-source"
+          {...register("observedThroughputSource", {
+            setValueAs: (value) => (value === "" ? undefined : value),
+          })}
+        >
+          <option value="">Select source…</option>
+          {measurementSourceOptions.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+        {errors.observedThroughputSource && (
+          <small className="field-error">{errors.observedThroughputSource.message}</small>
+        )}
       </label>
       <Button className="inspector-save" type="submit">
         Apply scenario

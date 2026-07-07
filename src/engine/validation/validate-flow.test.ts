@@ -122,4 +122,21 @@ describe("validateFlow", () => {
       }),
     )
   })
+
+  it("requires provenance for every observed metric", () => {
+    const graph = structuredClone(productViewedFlow)
+    graph.simulationProfile.observedLatencyMs = 125
+
+    expect(validateFlow(graph, nodeRegistry)).toContainEqual(
+      expect.objectContaining({
+        code: "MISSING_MEASUREMENT_SOURCE",
+        severity: "error",
+      }),
+    )
+
+    graph.simulationProfile.observedLatencySource = "load-test"
+    expect(validateFlow(graph, nodeRegistry)).not.toContainEqual(
+      expect.objectContaining({ code: "MISSING_MEASUREMENT_SOURCE" }),
+    )
+  })
 })

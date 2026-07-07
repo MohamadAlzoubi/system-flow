@@ -6,6 +6,7 @@ import type {
   ValidationIssue,
 } from "../../contracts"
 import { resolveEdgeContract } from "../contracts/contract-versions"
+import { boundaryRegionCode, deploymentRegionOf } from "../graph/resolve-region"
 
 const statefulCategories = new Set(["Data", "Messaging", "Streaming"])
 
@@ -43,6 +44,7 @@ export function validateOwnership(
     (graph.boundaries ?? []).map((boundary) => [boundary.id, boundary]),
   )
   const nodes = new Map(graph.nodes.map((node) => [node.id, node]))
+  const regionCodes = new Map<string, string>()
 
   for (const boundary of boundaries.values()) {
     if (boundary.parentId !== undefined && !boundaries.has(boundary.parentId)) {
@@ -66,6 +68,18 @@ export function validateOwnership(
       chain.add(parent.id)
       parent = parent.parentId ? boundaries.get(parent.parentId) : undefined
     }
+    const regionCode = boundary.regionCode?.trim()
+    if (boundary.kind === "region" && regionCode) {
+      const existingBoundaryId = regionCodes.get(regionCode)
+      if (existingBoundaryId && existingBoundaryId !== boundary.id) {
+        issues.push({
+          severity: "error",
+          code: "DUPLICATE_REGION_CODE",
+          message: `Region code ${regionCode} is used by more than one region boundary`,
+        })
+      }
+      regionCodes.set(regionCode, boundary.id)
+    }
   }
 
   const ownersByContract = new Map<string, NodeInstance[]>()
@@ -75,6 +89,20 @@ export function validateOwnership(
         severity: "error",
         code: "UNKNOWN_BOUNDARY",
         message: "Node is assigned to a boundary that does not exist",
+        nodeId: node.id,
+      })
+    }
+    const boundary = node.boundaryId ? boundaries.get(node.boundaryId) : undefined
+    const regionCode = boundaryRegionCode(node, boundaries)
+    if (
+      regionCode &&
+      node.responsibility?.deploymentRegion !== undefined &&
+      node.responsibility.deploymentRegion !== regionCode
+    ) {
+      issues.push({
+        severity: "warning",
+        code: "REGION_ASSIGNMENT_MISMATCH",
+        message: `${node.id} is inside ${boundary?.label ?? node.boundaryId} but declares deployment region ${node.responsibility.deploymentRegion}`,
         nodeId: node.id,
       })
     }
@@ -142,8 +170,8 @@ export function validateOwnership(
     const target = nodes.get(edge.toNodeId)
     if (!source || !target) continue
 
-    const sourceRegion = source.responsibility?.deploymentRegion
-    const targetRegion = target.responsibility?.deploymentRegion
+    const sourceRegion = deploymentRegionOf(source, boundaries)
+    const targetRegion = deploymentRegionOf(target, boundaries)
     if (
       isStateful(target, registry) &&
       sourceRegion !== undefined &&

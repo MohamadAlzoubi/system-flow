@@ -1,5 +1,6 @@
 export type {
   ArchitectureBoundary,
+  BoundaryCanvasLayout,
   BoundaryKind,
   CacheInvalidation,
   ConflictResolution,
@@ -26,6 +27,7 @@ export type {
   Blueprint,
   BlueprintComponent,
   BlueprintContract,
+  BlueprintHandoff,
   BlueprintOverview,
   BlueprintPhase,
   BlueprintReliability,
@@ -58,6 +60,7 @@ export type {
   FlowEdge,
   FlowGraph,
   InteractionType,
+  NetworkPresetId,
 } from "./flow-graph"
 export type {
   AvailabilityMode,
@@ -73,13 +76,19 @@ export type {
 } from "./node-definition"
 export type {
   AvailabilityFrameMetrics,
+  CalibrationEvidence,
   DataStoreFrameMetrics,
   EdgeSimulationMetrics,
+  MeasurementSource,
   MetricDelta,
   NodeSimulationMetrics,
+  ProductionReadinessMetrics,
   QueueFrameMetrics,
   QueueSimulationMetrics,
+  ReadinessMetricEvidence,
   ResilienceFrameMetrics,
+  ScenarioBatchEntry,
+  ScenarioBatchResult,
   ServiceFrameMetrics,
   SimulationBaseline,
   SimulationComparison,

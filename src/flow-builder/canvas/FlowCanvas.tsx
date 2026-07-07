@@ -18,9 +18,16 @@ import { inferInteractionDefaults } from "../../engine"
 import { nodeRegistry } from "../../node-registry"
 import { useFlowEditorStore } from "../../store/flow-editor.store"
 import { nodeDragMimeType } from "../dnd"
+import { regionAtPosition, regionCanvasLayout } from "../regions/region-layout"
+import {
+  type RegionAvailabilityState,
+  type RegionFlowNode,
+  RegionNode,
+} from "./RegionNode"
 import { SystemNode } from "./SystemNode"
 
-const nodeTypes = { systemNode: SystemNode }
+const nodeTypes = { systemNode: SystemNode, regionNode: RegionNode }
+const regionNodePrefix = "architecture-region:"
 
 // Solid edges are synchronous; dashes mark asynchronous boundaries.
 const interactionDashes: Record<InteractionType, string | undefined> = {
@@ -31,6 +38,22 @@ const interactionDashes: Record<InteractionType, string | undefined> = {
   stream: "2 4",
   "realtime-push": "2 4",
   "batch-transfer": "14 6",
+}
+
+function regionAvailabilityState(
+  memberIds: string[],
+  availabilityFrames: Map<
+    string,
+    { state: "online" | "offline" | "degraded" | "recovering" }
+  >,
+): RegionAvailabilityState {
+  const states = memberIds
+    .map((id) => availabilityFrames.get(id)?.state)
+    .filter((state) => state !== undefined)
+  if (states.includes("offline")) return "offline"
+  if (states.includes("recovering")) return "recovering"
+  if (states.includes("degraded")) return "degraded"
+  return "healthy"
 }
 
 export function FlowCanvas() {
@@ -45,6 +68,7 @@ function FlowCanvasInner() {
   const graph = useFlowEditorStore((state) => state.graph)
   const addEdge = useFlowEditorStore((state) => state.addEdge)
   const addNode = useFlowEditorStore((state) => state.addNode)
+  const assignNodeToRegion = useFlowEditorStore((state) => state.assignNodeToRegion)
   const { screenToFlowPosition } = useReactFlow()
   const removeEdges = useFlowEditorStore((state) => state.removeEdges)
   const removeNodes = useFlowEditorStore((state) => state.removeNodes)
@@ -95,45 +119,88 @@ function FlowCanvasInner() {
     () => new Map(result?.edgeMetrics.map((metric) => [metric.edgeId, metric])),
     [result],
   )
-
-  const nodes = useMemo<Node[]>(
+  const regionLayouts = useMemo(
     () =>
-      graph.nodes.map((node) => ({
-        id: node.id,
-        type: "systemNode",
-        position: node.position,
-        selected: node.id === selectedNodeId,
-        data: {
-          nodeType: node.type,
-          subtitle: String(node.config.eventType ?? node.config.queueName ?? ""),
-          boundaryLabel: graph.boundaries?.find(
-            (boundary) => boundary.id === node.boundaryId,
-          )?.label,
-          owner: node.responsibility?.owner,
-          metrics: nodeMetrics.get(node.id),
-          queueFrame: queueFrames.get(node.id),
-          serviceFrame: serviceFrames.get(node.id),
-          datastoreFrame: datastoreFrames.get(node.id),
-          resilienceFrame: resilienceFrames.get(node.id),
-          availabilityFrame: availabilityFrames.get(node.id),
-          // Traffic frames only surface while the user scrubs the timeline.
-          trafficFrame: simulationTime > 0 ? trafficFrames.get(node.id) : undefined,
-        },
-      })),
-    [
-      availabilityFrames,
-      datastoreFrames,
-      graph.boundaries,
-      graph.nodes,
-      nodeMetrics,
-      queueFrames,
-      resilienceFrames,
-      selectedNodeId,
-      serviceFrames,
-      simulationTime,
-      trafficFrames,
-    ],
+      (graph.boundaries ?? [])
+        .filter((boundary) => boundary.kind === "region")
+        .map((region, index) => ({
+          id: region.id,
+          region,
+          layout: regionCanvasLayout(
+            region,
+            index,
+            graph.nodes.filter((node) => node.boundaryId === region.id),
+          ),
+        })),
+    [graph.boundaries, graph.nodes],
   )
+
+  const nodes = useMemo<Node[]>(() => {
+    const regionNodes: RegionFlowNode[] = regionLayouts.map(({ region, layout }) => {
+      const memberIds = graph.nodes
+        .filter((node) => node.boundaryId === region.id)
+        .map((node) => node.id)
+      return {
+        id: `${regionNodePrefix}${region.id}`,
+        type: "regionNode",
+        position: layout.position,
+        draggable: false,
+        selectable: false,
+        connectable: false,
+        focusable: false,
+        zIndex: -1,
+        style: {
+          width: layout.width,
+          height: layout.height,
+          pointerEvents: "none",
+        },
+        data: {
+          label: region.label,
+          regionCode: region.regionCode?.trim() || region.id,
+          owner: region.owner,
+          memberCount: memberIds.length,
+          availabilityState: regionAvailabilityState(memberIds, availabilityFrames),
+        },
+      }
+    })
+    const systemNodes: Node[] = graph.nodes.map((node) => ({
+      id: node.id,
+      type: "systemNode",
+      position: node.position,
+      selected: node.id === selectedNodeId,
+      zIndex: 1,
+      data: {
+        nodeType: node.type,
+        subtitle: String(node.config.eventType ?? node.config.queueName ?? ""),
+        boundaryLabel: graph.boundaries?.find(
+          (boundary) => boundary.id === node.boundaryId,
+        )?.label,
+        owner: node.responsibility?.owner,
+        metrics: nodeMetrics.get(node.id),
+        queueFrame: queueFrames.get(node.id),
+        serviceFrame: serviceFrames.get(node.id),
+        datastoreFrame: datastoreFrames.get(node.id),
+        resilienceFrame: resilienceFrames.get(node.id),
+        availabilityFrame: availabilityFrames.get(node.id),
+        // Traffic frames only surface while the user scrubs the timeline.
+        trafficFrame: simulationTime > 0 ? trafficFrames.get(node.id) : undefined,
+      },
+    }))
+    return [...regionNodes, ...systemNodes]
+  }, [
+    availabilityFrames,
+    datastoreFrames,
+    graph.boundaries,
+    graph.nodes,
+    nodeMetrics,
+    queueFrames,
+    regionLayouts,
+    resilienceFrames,
+    selectedNodeId,
+    serviceFrames,
+    simulationTime,
+    trafficFrames,
+  ])
   const edges = useMemo<Edge[]>(
     () =>
       graph.edges.map((edge) => {
@@ -233,9 +300,30 @@ function FlowCanvasInner() {
       const type = event.dataTransfer.getData(nodeDragMimeType)
       if (!type) return
       event.preventDefault()
-      addNode(type, screenToFlowPosition({ x: event.clientX, y: event.clientY }))
+      const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      addNode(type, position, regionAtPosition(position, regionLayouts))
     },
-    [addNode, screenToFlowPosition],
+    [addNode, regionLayouts, screenToFlowPosition],
+  )
+  const onNodeDragStop = useCallback(
+    (_event: MouseEvent | TouchEvent, flowNode: Node) => {
+      if (flowNode.id.startsWith(regionNodePrefix)) return
+      const graphNode = graph.nodes.find((node) => node.id === flowNode.id)
+      if (!graphNode) return
+
+      const nextRegionId = regionAtPosition(flowNode.position, regionLayouts)
+      if (nextRegionId && nextRegionId !== graphNode.boundaryId) {
+        assignNodeToRegion(graphNode.id, nextRegionId)
+        return
+      }
+      const currentBoundary = (graph.boundaries ?? []).find(
+        (boundary) => boundary.id === graphNode.boundaryId,
+      )
+      if (!nextRegionId && currentBoundary?.kind === "region") {
+        assignNodeToRegion(graphNode.id, undefined)
+      }
+    },
+    [assignNodeToRegion, graph.boundaries, graph.nodes, regionLayouts],
   )
 
   return (
@@ -247,9 +335,12 @@ function FlowCanvasInner() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onNodeDragStop={onNodeDragStop}
         onDragOver={onDragOver}
         onDrop={onDrop}
-        onNodeClick={(_, node) => setSelectedNode(node.id)}
+        onNodeClick={(_, node) => {
+          if (!node.id.startsWith(regionNodePrefix)) setSelectedNode(node.id)
+        }}
         onEdgeClick={(_, edge) => setSelectedEdge(edge.id)}
         onPaneClick={() => {
           setSelectedNode(null)

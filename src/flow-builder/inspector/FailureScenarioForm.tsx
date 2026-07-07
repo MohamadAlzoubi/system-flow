@@ -82,6 +82,12 @@ export function FailureScenarioForm({ scenario, graph, onSave }: Props) {
     },
   })
   const kind = watch("kind")
+  const boundaries = graph.boundaries ?? []
+  const regionBoundaries = boundaries.filter((boundary) => boundary.kind === "region")
+  const affectedBoundaryOptions =
+    kind === "region-unavailable" && regionBoundaries.length > 0
+      ? regionBoundaries
+      : boundaries
 
   const submit = (values: FormValues) => {
     const result = schema.safeParse(values)
@@ -95,12 +101,18 @@ export function FailureScenarioForm({ scenario, graph, onSave }: Props) {
       return
     }
     const parsed = result.data
+    const affectedBoundaryIds =
+      parsed.kind === "region-unavailable" && regionBoundaries.length > 0
+        ? parsed.affectedBoundaryIds.filter((id) =>
+            regionBoundaries.some((boundary) => boundary.id === id),
+          )
+        : parsed.affectedBoundaryIds
     onSave({
       id: scenario.id,
       name: parsed.name.trim(),
       kind: parsed.kind,
       affectedNodeIds: parsed.affectedNodeIds,
-      affectedBoundaryIds: parsed.affectedBoundaryIds,
+      affectedBoundaryIds,
       startSeconds: parsed.startSeconds,
       durationSeconds: parsed.durationSeconds,
       recoverySeconds: parsed.recoverySeconds,
@@ -139,10 +151,12 @@ export function FailureScenarioForm({ scenario, graph, onSave }: Props) {
           </label>
         ))}
       </fieldset>
-      {(graph.boundaries ?? []).length > 0 && (
+      {affectedBoundaryOptions.length > 0 && (
         <fieldset className="ownership-set">
-          <legend>Affected boundaries</legend>
-          {(graph.boundaries ?? []).map((boundary) => (
+          <legend>
+            {kind === "region-unavailable" ? "Affected regions" : "Affected boundaries"}
+          </legend>
+          {affectedBoundaryOptions.map((boundary) => (
             <label className="contract-flag" key={boundary.id}>
               <input
                 type="checkbox"
@@ -150,6 +164,9 @@ export function FailureScenarioForm({ scenario, graph, onSave }: Props) {
                 {...register("affectedBoundaryIds")}
               />
               {boundary.label}
+              {boundary.kind === "region" && boundary.regionCode
+                ? ` (${boundary.regionCode})`
+                : ""}
             </label>
           ))}
         </fieldset>

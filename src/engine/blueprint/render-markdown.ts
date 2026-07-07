@@ -74,6 +74,37 @@ export function renderBlueprintMarkdown(blueprint: Blueprint): string {
     lines.push(`**${group.category}**`, bullet(group.items), "")
   }
 
+  lines.push("## Production readiness handoff", "")
+  lines.push("### Regional topology", "", bullet(blueprint.handoff.regionalTopology), "")
+  lines.push(
+    "### Critical assumptions",
+    "",
+    bullet(blueprint.handoff.criticalAssumptions),
+    "",
+  )
+  lines.push("### Architecture decisions", "", bullet(blueprint.handoff.decisions), "")
+  lines.push(
+    "### Required implementation tasks",
+    "",
+    bullet(blueprint.handoff.implementationTasks),
+    "",
+  )
+  lines.push("### Load test plan", "", bullet(blueprint.handoff.loadTestPlan), "")
+  lines.push("### Chaos test plan", "", bullet(blueprint.handoff.chaosTestPlan), "")
+  lines.push(
+    "### Observability checklist",
+    "",
+    bullet(blueprint.handoff.observabilityChecklist),
+    "",
+  )
+  lines.push("### Runbook outline", "", bullet(blueprint.handoff.runbookOutline), "")
+  lines.push(
+    "### Rollout and migration sequence",
+    "",
+    bullet(blueprint.handoff.rolloutSequence),
+    "",
+  )
+
   return lines
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")

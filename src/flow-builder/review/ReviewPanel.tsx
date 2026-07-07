@@ -3,9 +3,11 @@ import { useEffect, useMemo, useState } from "react"
 import { Button } from "../../components/ui/button"
 import { Input } from "../../components/ui/input"
 import type { ArchitectureRule, RuleCategory } from "../../contracts"
-import { evaluateRules, findAcceptance, findingKey } from "../../engine"
+import type { ReviewModeId } from "../../engine"
+import { evaluateRules, findAcceptance, findingKey, reviewModes } from "../../engine"
 import { nodeRegistry } from "../../node-registry"
 import { useFlowEditorStore } from "../../store/flow-editor.store"
+import { ReviewModePanel } from "./ReviewModePanel"
 
 const categoryLabels: Record<RuleCategory, string> = {
   contracts: "Contracts",
@@ -14,6 +16,8 @@ const categoryLabels: Record<RuleCategory, string> = {
   state: "State & data",
   security: "Security",
   operability: "Operability",
+  cost: "Cost risk",
+  quota: "Quota risk",
 }
 
 const severityLabels = {
@@ -35,6 +39,7 @@ export function ReviewPanel({ onClose }: Props) {
   const [acceptingKey, setAcceptingKey] = useState<string | null>(null)
   const [reason, setReason] = useState("")
   const [reviewDate, setReviewDate] = useState("")
+  const [activeView, setActiveView] = useState<"findings" | ReviewModeId>("findings")
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -177,50 +182,78 @@ export function ReviewPanel({ onClose }: Props) {
             <X size={16} />
           </button>
         </div>
-        {open.length === 0 && (
-          <p className="goal-hint">
-            No open findings. The review covers interactions, reliability, messaging,
-            data, security, and operability.
-          </p>
-        )}
-        {categories.map((category) => (
-          <div className="review-category" key={category}>
-            <h3>{categoryLabels[category]}</h3>
-            {open.filter((finding) => finding.category === category).map(renderFinding)}
-          </div>
-        ))}
-        {accepted.length > 0 && (
-          <div className="review-category review-accepted-list">
-            <h3>Accepted risks</h3>
-            {accepted.map((finding) => {
-              const acceptance = findAcceptance(finding, graph.ruleAcceptances)
-              return (
-                <div
-                  className="review-finding review-accepted"
-                  key={finding.code + findingKey(finding)}
-                >
-                  <div className="review-finding-head">
-                    <b>Accepted</b>
-                    <span>{finding.message}</span>
-                  </div>
-                  <p>
-                    {acceptance?.reason}
-                    {acceptance?.reviewDate
-                      ? ` — review by ${acceptance.reviewDate}`
-                      : ""}
-                  </p>
-                  <Button
-                    variant="ghost"
-                    onClick={() =>
-                      revokeRuleAcceptance(finding.code, findingKey(finding))
-                    }
-                  >
-                    Reopen
-                  </Button>
-                </div>
-              )
-            })}
-          </div>
+        <div className="review-mode-tabs">
+          <button
+            type="button"
+            className={activeView === "findings" ? "active" : ""}
+            onClick={() => setActiveView("findings")}
+          >
+            Findings
+          </button>
+          {reviewModes.map((mode) => (
+            <button
+              type="button"
+              key={mode.id}
+              className={activeView === mode.id ? "active" : ""}
+              onClick={() => setActiveView(mode.id)}
+              title={mode.description}
+            >
+              {mode.label}
+            </button>
+          ))}
+        </div>
+        {activeView === "findings" ? (
+          <>
+            {open.length === 0 && (
+              <p className="goal-hint">
+                No open findings. The review covers interactions, reliability, messaging,
+                data, security, operability, cost, and quota.
+              </p>
+            )}
+            {categories.map((category) => (
+              <div className="review-category" key={category}>
+                <h3>{categoryLabels[category]}</h3>
+                {open
+                  .filter((finding) => finding.category === category)
+                  .map(renderFinding)}
+              </div>
+            ))}
+            {accepted.length > 0 && (
+              <div className="review-category review-accepted-list">
+                <h3>Accepted risks</h3>
+                {accepted.map((finding) => {
+                  const acceptance = findAcceptance(finding, graph.ruleAcceptances)
+                  return (
+                    <div
+                      className="review-finding review-accepted"
+                      key={finding.code + findingKey(finding)}
+                    >
+                      <div className="review-finding-head">
+                        <b>Accepted</b>
+                        <span>{finding.message}</span>
+                      </div>
+                      <p>
+                        {acceptance?.reason}
+                        {acceptance?.reviewDate
+                          ? ` — review by ${acceptance.reviewDate}`
+                          : ""}
+                      </p>
+                      <Button
+                        variant="ghost"
+                        onClick={() =>
+                          revokeRuleAcceptance(finding.code, findingKey(finding))
+                        }
+                      >
+                        Reopen
+                      </Button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </>
+        ) : (
+          <ReviewModePanel modeId={activeView} onJump={jumpTo} />
         )}
       </section>
     </div>

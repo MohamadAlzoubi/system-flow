@@ -17,11 +17,24 @@ import { resolveEdgeContract } from "../contracts/contract-versions"
 import { validateFlow } from "../validation/validate-flow"
 import { applyFailureScenario } from "./apply-failure-scenario"
 import { classifyUserImpact } from "./classify-user-impact"
+import { estimateProductionReadiness } from "./estimate-readiness"
 import { evaluateGoals } from "./evaluate-goals"
 import { trafficRateAt } from "./traffic-pattern"
 
 const number = (value: unknown) => Number(value)
 const round = (value: number) => Number(value.toFixed(2))
+const finiteOr = (value: unknown, fallback: number) => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+const nonnegativeOr = (value: unknown, fallback: number) => {
+  const parsed = finiteOr(value, fallback)
+  return parsed >= 0 ? parsed : fallback
+}
+const positiveOr = (value: unknown, fallback: number) => {
+  const parsed = finiteOr(value, fallback)
+  return parsed > 0 ? parsed : fallback
+}
 // callerFacing marks paths still connected to the original caller; crossing an
 // asynchronous edge ends the caller's wait, so downstream latency is
 // processing lag rather than response time.
@@ -35,6 +48,39 @@ const asynchronousInteractions = new Set<FlowGraph["edges"][number]["interaction
   "batch-transfer",
   "realtime-push",
 ])
+
+function isDeadLetterRoute(
+  edge: FlowGraph["edges"][number],
+  nodes: ReadonlyMap<string, NodeInstance>,
+): boolean {
+  return nodes.get(edge.toNodeId)?.type === "messaging.dead-letter-queue"
+}
+
+function routableEdges(
+  node: NodeInstance,
+  edges: FlowGraph["edges"],
+  nodes: ReadonlyMap<string, NodeInstance>,
+): FlowGraph["edges"] {
+  if (node.type !== "rabbitmq.queue") return edges
+  return edges.filter((edge) => !isDeadLetterRoute(edge, nodes))
+}
+
+function routingModeFor(
+  node: NodeInstance,
+  edges: FlowGraph["edges"],
+): NonNullable<NodeInstance["routingPolicy"]>["mode"] {
+  if (node.routingPolicy?.mode) return node.routingPolicy.mode
+  if (edges.some((edge) => edge.trafficPercentage !== undefined)) return "weighted"
+  if (node.type === "network.load-balancer" && edges.length > 1) return "round-robin"
+  return "broadcast"
+}
+
+function consumerParallelism(target: NodeInstance, result: NodeSimulationResult): number {
+  if (result.scaling) {
+    return Math.max(result.scaling.initialReplicas, result.scaling.desiredReplicas)
+  }
+  return Math.max(1, Math.floor(positiveOr(target.config.replicas, 1)))
+}
 
 function seedFrom(value: string): number {
   let seed = 2166136261
@@ -215,7 +261,9 @@ export function runSimulation(
         assumptions: ["The graph must be valid and acyclic."],
         recommendations: [],
         calibrated: false,
+        calibrationEvidence: [],
       },
+      readiness: { evidence: [] },
       userImpact: [],
     }
   }
@@ -331,6 +379,9 @@ export function runSimulation(
         )
     const inputRate = merged.rate
     const result = definition.simulate(node.config, { profile, ratePerSecond: inputRate })
+    const allOutgoingEdges = outgoing.get(nodeId) ?? []
+    const normalOutgoingEdges = routableEdges(node, allOutgoingEdges, nodes)
+    const routingMode = routingModeFor(node, normalOutgoingEdges)
     const availabilityFactor = averageAvailability(node, profile.durationSeconds)
     latencyVariance += (result.latencyStdDevMs ?? 0) ** 2
     if (result.scaling) scalingServices.set(nodeId, result.scaling)
@@ -343,21 +394,26 @@ export function runSimulation(
     const effectiveCapacity = (capacity ?? inputRate) * availabilityFactor
     let acceptedRate = Math.min(inputRate, effectiveCapacity)
     if (node.type === "rabbitmq.queue") {
-      const consumerEstimates = (outgoing.get(nodeId) ?? []).map((edge) => {
+      const consumerEstimates = normalOutgoingEdges.map((edge) => {
         const target = nodes.get(edge.toNodeId)
         const targetDefinition = target && registry.get(target.type)
         if (!target || !targetDefinition) {
-          return { id: edge.toNodeId, staticCapacity: 0, available: 0 }
+          return {
+            id: edge.toNodeId,
+            consumerSlots: 0,
+            staticCapacity: 0,
+            available: 0,
+          }
         }
         const targetResult = targetDefinition.simulate(target.config, {
           profile,
           ratePerSecond: inputRate,
         })
-        const processingMs = number(target.config.averageProcessingMs)
+        const processingMs = positiveOr(target.config.averageProcessingMs, 0)
         const prefetchCapacity =
           processingMs > 0
-            ? (number(node.config.prefetch) *
-                Math.max(1, number(target.config.concurrency)) *
+            ? (nonnegativeOr(node.config.prefetch, 0) *
+                Math.max(1, positiveOr(target.config.concurrency, 1)) *
                 1000) /
               processingMs
             : Number.POSITIVE_INFINITY
@@ -367,6 +423,7 @@ export function runSimulation(
         )
         return {
           id: target.id,
+          consumerSlots: consumerParallelism(target, targetResult),
           staticCapacity,
           available:
             staticCapacity * averageAvailability(target, profile.durationSeconds),
@@ -376,46 +433,56 @@ export function runSimulation(
         .map((estimate) => estimate.available)
         .sort((left, right) => right - left)
       const activePartitions = Math.min(
-        node.config.orderingRequired === true ? 1 : number(node.config.partitions),
-        Math.max(1, consumerCapacities.length),
+        node.config.orderingRequired === true
+          ? 1
+          : Math.max(1, Math.floor(positiveOr(node.config.partitions, 1))),
+        Math.max(
+          1,
+          consumerEstimates.reduce((sum, estimate) => sum + estimate.consumerSlots, 0),
+        ),
       )
       const consumerCapacity = consumerCapacities
         .slice(0, activePartitions)
         .reduce((sum, value) => sum + value, 0)
-      const payloadSizeBytes = profile.payloadSizeBytes ?? 1200
+      const payloadSizeBytes = positiveOr(profile.payloadSizeBytes, 1200)
       const bandwidthCapacity =
-        (number(node.config.bandwidthMbps) * 1_000_000) / (payloadSizeBytes * 8)
+        (positiveOr(node.config.bandwidthMbps, Number.POSITIVE_INFINITY) * 1_000_000) /
+        (payloadSizeBytes * 8)
       const partitionCapacity =
-        number(node.config.maxThroughputPerPartition) * activePartitions
+        positiveOr(node.config.maxThroughputPerPartition, Number.POSITIVE_INFINITY) *
+        activePartitions
       const brokerCapacity = Math.min(
-        number(node.config.brokerMaxThroughputPerSecond),
+        positiveOr(node.config.brokerMaxThroughputPerSecond, Number.POSITIVE_INFINITY),
         partitionCapacity,
         bandwidthCapacity,
       )
       const storageCapacityEvents =
-        (number(node.config.brokerStorageMb) * 1024 * 1024) / payloadSizeBytes
+        (nonnegativeOr(node.config.brokerStorageMb, Number.POSITIVE_INFINITY) *
+          1024 *
+          1024) /
+        payloadSizeBytes
       acceptedRate =
         Math.min(
           inputRate,
           consumerCapacities.length > 0 ? consumerCapacity : inputRate,
           brokerCapacity,
         ) * availabilityFactor
-      const consumers = (outgoing.get(nodeId) ?? [])
+      const consumers = normalOutgoingEdges
         .map((edge) => nodes.get(edge.toNodeId))
         .filter((target) => target !== undefined)
       const failureRate =
         consumers.length === 0
           ? 0
-          : consumers.reduce(
-              (sum, target) =>
-                sum +
-                Math.min(
-                  0.99,
-                  (number(target.config.failureRate) || 0) *
-                    (1 + number(target.config.failureJitterPercent) / 200),
-                ),
-              0,
-            ) / consumers.length
+          : consumers.reduce((sum, target) => {
+              const targetFailureRate = nonnegativeOr(target.config.failureRate, 0)
+              const failureJitterPercent = nonnegativeOr(
+                target.config.failureJitterPercent,
+                0,
+              )
+              return (
+                sum + Math.min(0.99, targetFailureRate * (1 + failureJitterPercent / 200))
+              )
+            }, 0) / consumers.length
       const consumerSchedule = consumers
         .map((target) => {
           const targetDefinition = registry.get(target.type)
@@ -428,20 +495,25 @@ export function runSimulation(
       queueRates.set(nodeId, {
         incoming: inputRate,
         outgoing: acceptedRate,
-        maxSize: Math.min(number(node.config.maxQueueSize), storageCapacityEvents),
-        ttlSeconds: number(node.config.messageTtlMs) / 1000,
+        maxSize: Math.min(
+          nonnegativeOr(node.config.maxQueueSize, Number.POSITIVE_INFINITY),
+          storageCapacityEvents,
+        ),
+        ttlSeconds: nonnegativeOr(node.config.messageTtlMs, 0) / 1000,
         deadLetter: node.config.deadLetterQueue === true,
-        deadLetterMaxSize: number(node.config.deadLetterMaxSize),
-        retryCount: consumerSchedule?.retryCount ?? number(node.config.retryCount),
+        deadLetterMaxSize: nonnegativeOr(node.config.deadLetterMaxSize, 0),
+        retryCount:
+          consumerSchedule?.retryCount ?? nonnegativeOr(node.config.retryCount, 0),
         retryDelaySeconds:
-          (consumerSchedule?.initialDelayMs ?? number(node.config.retryDelayMs)) / 1000,
+          (consumerSchedule?.initialDelayMs ??
+            nonnegativeOr(node.config.retryDelayMs, 0)) / 1000,
         failureRate,
-        acknowledgementLatencyMs: number(node.config.acknowledgementLatencyMs),
+        acknowledgementLatencyMs: nonnegativeOr(node.config.acknowledgementLatencyMs, 0),
         brokerCapacity,
         retryInitialDelayMs:
-          consumerSchedule?.initialDelayMs ?? number(node.config.retryDelayMs),
+          consumerSchedule?.initialDelayMs ?? nonnegativeOr(node.config.retryDelayMs, 0),
         retryMaximumDelayMs:
-          consumerSchedule?.maximumDelayMs ?? number(node.config.retryDelayMs),
+          consumerSchedule?.maximumDelayMs ?? nonnegativeOr(node.config.retryDelayMs, 0),
         retryJitterPercent: consumerSchedule?.jitterPercent ?? 0,
         payloadSizeBytes,
         durable: node.config.durable === true,
@@ -483,7 +555,7 @@ export function runSimulation(
       cpuCores: round(result.cpuCores),
       memoryMb: round(result.memoryMb),
       status,
-      routingMode: node.routingPolicy?.mode,
+      routingMode,
       mergeMode: node.mergePolicy?.mode,
       replicas: result.scaling?.initialReplicas,
       desiredReplicas: result.scaling?.desiredReplicas,
@@ -565,12 +637,10 @@ export function runSimulation(
       })
     }
 
-    const edges = outgoing.get(nodeId) ?? []
-    const routingMode =
-      node.routingPolicy?.mode ??
-      (edges.some((edge) => edge.trafficPercentage !== undefined)
-        ? "weighted"
-        : "broadcast")
+    const edges = normalOutgoingEdges
+    const deadLetterEdges = allOutgoingEdges.filter((edge) =>
+      isDeadLetterRoute(edge, nodes),
+    )
     const sortedEdges = [...edges].sort(
       (left, right) => (left.priority ?? 0) - (right.priority ?? 0),
     )
@@ -684,6 +754,16 @@ export function runSimulation(
           edgeId: edge.id,
         })
       }
+    }
+    for (const edge of deadLetterEdges) {
+      edgeMetrics.push({
+        edgeId: edge.id,
+        ratePerSecond: 0,
+        totalEvents: 0,
+        percentageOfSourceTraffic: 0,
+        status: "inactive",
+        latencyMs: round(pathLatency),
+      })
     }
   }
 
@@ -911,13 +991,9 @@ export function runSimulation(
         droppedRatePerSecond: round(Math.max(0, input - accepted)),
       })
 
-      const frameEdges = outgoing.get(nodeId) ?? []
+      const frameEdges = routableEdges(node, outgoing.get(nodeId) ?? [], nodes)
       if (frameEdges.length === 0) continue
-      const frameRoutingMode =
-        node.routingPolicy?.mode ??
-        (frameEdges.some((edge) => edge.trafficPercentage !== undefined)
-          ? "weighted"
-          : "broadcast")
+      const frameRoutingMode = routingModeFor(node, frameEdges)
       const frameSorted = [...frameEdges].sort(
         (left, right) => (left.priority ?? 0) - (right.priority ?? 0),
       )
@@ -1190,7 +1266,6 @@ export function runSimulation(
   const modeledDistributions = graph.nodes.filter((node) =>
     ["worker", "external.api"].includes(node.type),
   ).length
-  const confidence = calibrated ? "high" : modeledDistributions > 0 ? "medium" : "low"
   const rawEventsProcessed = nodeMetrics
     .filter((metric) => (outgoing.get(metric.nodeId) ?? []).length === 0)
     .reduce((sum, metric) => sum + metric.processedEvents, 0)
@@ -1204,10 +1279,72 @@ export function runSimulation(
     profile.observedThroughputPerSecond !== undefined && rawEventsProcessed > 0
       ? observedEvents / rawEventsProcessed
       : 1
+  const evidenceQuality = {
+    assumed: "synthetic",
+    "load-test": "measured",
+    production: "measured",
+    "vendor-doc": "documented",
+    unknown: "unknown",
+  } as const
+  const calibrationEvidence = [
+    ...(profile.observedLatencyMs !== undefined
+      ? [
+          {
+            metric: "latency" as const,
+            observedValue: profile.observedLatencyMs,
+            unit: "ms" as const,
+            source: profile.observedLatencySource ?? "unknown",
+            quality: evidenceQuality[profile.observedLatencySource ?? "unknown"],
+            calibrationFactor: round(latencyFactor),
+          },
+        ]
+      : []),
+    ...(profile.observedThroughputPerSecond !== undefined
+      ? [
+          {
+            metric: "throughput" as const,
+            observedValue: profile.observedThroughputPerSecond,
+            unit: "events/second" as const,
+            source: profile.observedThroughputSource ?? "unknown",
+            quality: evidenceQuality[profile.observedThroughputSource ?? "unknown"],
+            calibrationFactor: round(throughputFactor),
+          },
+        ]
+      : []),
+  ]
+  const allEvidenceMeasured =
+    calibrationEvidence.length > 0 &&
+    calibrationEvidence.every((evidence) => evidence.quality === "measured")
+  const confidence = allEvidenceMeasured
+    ? "high"
+    : calibrated || modeledDistributions > 0
+      ? "medium"
+      : "low"
+  const confidenceReasons = allEvidenceMeasured
+    ? [
+        `Calibration uses measured ${calibrationEvidence
+          .map((evidence) => `${evidence.metric} (${evidence.source})`)
+          .join(" and ")} evidence.`,
+      ]
+    : calibrated
+      ? [
+          `Calibration is capped at medium confidence because evidence is ${[
+            ...new Set(calibrationEvidence.map((evidence) => evidence.quality)),
+          ].join(" and ")}.`,
+        ]
+      : ["Results use deterministic configuration estimates without observed data."]
 
   const averageLatencyMs = Math.round(endToEndLatency * latencyFactor)
   const p95LatencyMs = Math.round(percentile(latencySamples, 0.95) * latencyFactor)
   const totalEventsProcessed = Math.round(rawEventsProcessed * throughputFactor)
+  const readiness = estimateProductionReadiness({
+    graph,
+    scenario,
+    nodeMetrics,
+    timeline,
+    lostEvents,
+    sourceRatePerSecond,
+  })
   const goalReport = evaluateGoals(graph.architectureGoals, {
     averageLatencyMs,
     p95LatencyMs,
@@ -1215,6 +1352,9 @@ export function runSimulation(
     bottleneckRatio,
     lostEvents,
     availabilityPercent: flowAvailabilityPercent,
+    recoveryTimeSeconds: readiness.recoveryTimeSeconds,
+    recoveryPointSeconds: readiness.recoveryPointSeconds,
+    dataStalenessMs: readiness.dataStalenessMs,
   })
   // Frame-observed timeouts beyond what the whole-scenario averages already
   // attribute to the same down dependencies.
@@ -1254,11 +1394,10 @@ export function runSimulation(
     nodeMetrics,
     edgeMetrics,
     timeline,
+    readiness,
     explanation: {
       confidence,
-      confidenceReasons: calibrated
-        ? ["Observed metrics are available for calibration."]
-        : ["Results use deterministic configuration estimates without observed data."],
+      confidenceReasons,
       assumptions: [
         "Traffic and failures are deterministic for the same graph and profile.",
         "Node capacity is estimated from configured limits.",
@@ -1273,6 +1412,7 @@ export function runSimulation(
       ],
       recommendations: recommendationsFor(warnings),
       calibrated,
+      calibrationEvidence,
       calibrationFactors: calibrated
         ? {
             latency: round(latencyFactor),

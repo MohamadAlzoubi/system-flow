@@ -87,6 +87,52 @@ describe("generateBlueprint", () => {
     )
     expect(duplicateGroup?.items).toEqual([...new Set(duplicateGroup?.items)])
   })
+
+  it("builds a traceable production readiness handoff pack", () => {
+    const graph = structuredClone(purchaseFlow)
+    graph.boundaries = [
+      ...(graph.boundaries ?? []),
+      {
+        id: "region-eu",
+        label: "EU West",
+        kind: "region",
+        regionCode: "eu-west-1",
+        owner: "platform",
+      },
+    ]
+    graph.nodes[0].boundaryId = "region-eu"
+    graph.nodes[0].responsibility = {
+      ...graph.nodes[0].responsibility,
+      deploymentRegion: "eu-west-1",
+    }
+    const assumptionId = graph.assumptions?.[0]?.id
+    const decisionId = graph.decisionRecords?.[0]?.id
+    const scenarioId = graph.failureScenarios?.[0]?.id
+    if (!assumptionId || !decisionId || !scenarioId) {
+      throw new Error("Fixture requires assumption, decision, and scenario records")
+    }
+
+    const blueprint = generateBlueprint(graph, nodeRegistry)
+
+    expect(blueprint.handoff.regionalTopology).toContainEqual(
+      expect.stringContaining(graph.nodes[0].id),
+    )
+    expect(blueprint.handoff.criticalAssumptions).toContainEqual(
+      expect.stringContaining(assumptionId),
+    )
+    expect(blueprint.handoff.decisions).toContainEqual(
+      expect.stringContaining(decisionId),
+    )
+    expect(blueprint.handoff.implementationTasks).toContainEqual(
+      expect.stringContaining(graph.edges[0].id),
+    )
+    expect(blueprint.handoff.chaosTestPlan).toContainEqual(
+      expect.stringContaining(scenarioId),
+    )
+    expect(blueprint.handoff.observabilityChecklist.length).toBeGreaterThan(0)
+    expect(blueprint.handoff.runbookOutline.length).toBeGreaterThan(0)
+    expect(blueprint.handoff.rolloutSequence.length).toBeGreaterThan(0)
+  })
 })
 
 describe("blueprint renderers", () => {
@@ -104,6 +150,13 @@ describe("blueprint renderers", () => {
       "## Development sequence",
       "## Test plan",
       "## Risks and open questions",
+      "## Production readiness handoff",
+      "### Regional topology",
+      "### Load test plan",
+      "### Chaos test plan",
+      "### Observability checklist",
+      "### Runbook outline",
+      "### Rollout and migration sequence",
     ]) {
       expect(markdown).toContain(heading)
     }

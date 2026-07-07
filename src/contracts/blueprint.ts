@@ -12,6 +12,19 @@ export type Blueprint = {
   developmentSequence: BlueprintPhase[]
   testPlan: BlueprintTestGroup[]
   risks: BlueprintRiskGroup[]
+  handoff: BlueprintHandoff
+}
+
+export type BlueprintHandoff = {
+  regionalTopology: string[]
+  criticalAssumptions: string[]
+  decisions: string[]
+  implementationTasks: string[]
+  loadTestPlan: string[]
+  chaosTestPlan: string[]
+  observabilityChecklist: string[]
+  runbookOutline: string[]
+  rolloutSequence: string[]
 }
 
 export type BlueprintOverview = {

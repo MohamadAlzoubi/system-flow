@@ -1,5 +1,5 @@
 import type { GoalReport } from "./architecture-goals"
-import type { UserImpactOutcome } from "./failure-scenario"
+import type { FailureScenario, UserImpactOutcome } from "./failure-scenario"
 import type { ValidationIssue } from "./validation"
 
 export type UserImpactEntry = {
@@ -10,6 +10,13 @@ export type UserImpactEntry = {
 
 export type TrafficPattern = "steady" | "burst" | "daily-peak" | "random"
 
+export type MeasurementSource =
+  | "assumed"
+  | "load-test"
+  | "production"
+  | "vendor-doc"
+  | "unknown"
+
 export type SimulationProfile = {
   durationSeconds: number
   cpuCores: number
@@ -18,7 +25,9 @@ export type SimulationProfile = {
   requestsPerSecond: number
   trafficPattern: TrafficPattern
   observedLatencyMs?: number
+  observedLatencySource?: MeasurementSource
   observedThroughputPerSecond?: number
+  observedThroughputSource?: MeasurementSource
   peakRequestsPerSecond?: number
   burstDurationSeconds?: number
   rampUpSeconds?: number
@@ -41,8 +50,27 @@ export type SimulationResult = {
   edgeMetrics: EdgeSimulationMetrics[]
   timeline: SimulationFrame[]
   explanation: SimulationExplanation
+  readiness: ProductionReadinessMetrics
   goalReport?: GoalReport
   userImpact: UserImpactEntry[]
+}
+
+export type ReadinessMetricEvidence = {
+  metric: "recovery-time" | "recovery-point" | "data-staleness"
+  value: number
+  unit: "seconds" | "ms" | "events"
+  source: string
+  role: "estimate" | "constraint"
+  reason: string
+  nodeId?: string
+  edgeId?: string
+}
+
+export type ProductionReadinessMetrics = {
+  recoveryTimeSeconds?: number
+  recoveryPointSeconds?: number
+  dataStalenessMs?: number
+  evidence: ReadinessMetricEvidence[]
 }
 
 export type SimulationExplanation = {
@@ -51,10 +79,20 @@ export type SimulationExplanation = {
   assumptions: string[]
   recommendations: SimulationRecommendation[]
   calibrated: boolean
+  calibrationEvidence: CalibrationEvidence[]
   calibrationFactors?: {
     latency: number
     throughput: number
   }
+}
+
+export type CalibrationEvidence = {
+  metric: "latency" | "throughput"
+  observedValue: number
+  unit: "ms" | "events/second"
+  source: MeasurementSource
+  quality: "synthetic" | "measured" | "documented" | "unknown"
+  calibrationFactor: number
 }
 
 export type SimulationRecommendation = {
@@ -224,4 +262,17 @@ export type SimulationComparison = {
     newNodeIds: string[]
     moved: boolean
   }
+}
+
+export type ScenarioBatchEntry = {
+  scenario: FailureScenario
+  result: SimulationResult
+  comparisonToBaseline: SimulationComparison
+}
+
+export type ScenarioBatchResult = {
+  graphId: string
+  graphName: string
+  baseline: SimulationResult
+  scenarios: ScenarioBatchEntry[]
 }

@@ -15,6 +15,7 @@ import {
   Waypoints,
   X,
 } from "lucide-react"
+import { deploymentRegionOf } from "../../engine"
 import { nodeRegistry } from "../../node-registry"
 import { useFlowEditorStore } from "../../store/flow-editor.store"
 import { fallbackNodeIcon, nodeTypeIcons } from "../node-icons"
@@ -118,8 +119,25 @@ export function NodeInspector() {
   )
   const node = graph.nodes.find((item) => item.id === selectedNodeId)
   const edge = graph.edges.find((item) => item.id === selectedEdgeId)
+  const boundaries = new Map(
+    (graph.boundaries ?? []).map((boundary) => [boundary.id, boundary]),
+  )
+  const edgeSource = edge
+    ? graph.nodes.find((candidate) => candidate.id === edge.fromNodeId)
+    : undefined
+  const edgeTarget = edge
+    ? graph.nodes.find((candidate) => candidate.id === edge.toNodeId)
+    : undefined
+  const edgeSourceRegion = edgeSource
+    ? deploymentRegionOf(edgeSource, boundaries)
+    : undefined
+  const edgeTargetRegion = edgeTarget
+    ? deploymentRegionOf(edgeTarget, boundaries)
+    : undefined
   const definition = node ? nodeRegistry.get(node.type) : undefined
-  const routingValue = node?.routingPolicy?.mode ?? "broadcast"
+  const routingValue =
+    node?.routingPolicy?.mode ??
+    (node?.type === "network.load-balancer" ? "round-robin" : "broadcast")
   const mergeValue = node?.mergePolicy?.mode ?? "sum"
   const NodeIcon = node ? (nodeTypeIcons[node.type] ?? fallbackNodeIcon) : undefined
 
@@ -326,6 +344,8 @@ export function NodeInspector() {
             <EdgeNetworkForm
               key={edge.id}
               edge={edge}
+              sourceRegion={edgeSourceRegion}
+              targetRegion={edgeTargetRegion}
               onSave={(network) => updateEdgeNetwork(edge.id, network)}
             />
           </InspectorSection>
