@@ -1,6 +1,7 @@
 import { EducationPage } from "../education/EducationPage"
 import { FlowCanvas } from "../flow-builder/canvas/FlowCanvas"
 import { NodeInspector } from "../flow-builder/inspector/NodeInspector"
+import { EditorWelcomeDialog } from "../flow-builder/onboarding/EditorWelcomeDialog"
 import { AnalysisPanel } from "../flow-builder/panels/AnalysisPanel"
 import { NodeLibrarySidebar } from "../flow-builder/sidebar/NodeLibrarySidebar"
 import { FlowToolbar } from "../flow-builder/toolbar/FlowToolbar"
@@ -20,6 +21,7 @@ export default function App() {
         {isInspectorOpen && <NodeInspector />}
       </div>
       {isAnalysisOpen && <AnalysisPanel />}
+      <EditorWelcomeDialog />
     </main>
   )
 }

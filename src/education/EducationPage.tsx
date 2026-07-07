@@ -86,7 +86,7 @@ export function EducationPage() {
           <a href="#1-the-mental-model">Foundations</a>
           <a href="#7-ingress">Components</a>
           <a href="#18-system-design-concepts">Concepts</a>
-          <a href="#16-guided-learning-labs">Labs</a>
+          <a href="#34-practice-curriculum">Practice</a>
         </nav>
         <a className="open-editor" href="/">
           Open editor <ArrowRight size={15} />
@@ -137,7 +137,7 @@ export function EducationPage() {
             <BookOpen size={18} />
             <strong>Learn by changing things</strong>
             <p>Run a baseline, break one assumption, then compare what moved.</p>
-            <a href="#16-guided-learning-labs">Start a lab →</a>
+            <a href="#34-practice-curriculum">Start a practice case →</a>
           </div>
         </aside>
 

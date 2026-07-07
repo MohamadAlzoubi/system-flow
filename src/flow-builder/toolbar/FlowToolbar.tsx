@@ -2,21 +2,24 @@ import {
   BarChart3,
   BookMarked,
   CheckCircle2,
+  ChevronDown,
   ClipboardCheck,
   Download,
   FileJson2,
   FilePlus2,
   FileText,
   FlaskConical,
+  FolderOpen,
   Globe2,
   GraduationCap,
+  Layers,
   PanelRight,
   Play,
   Trash2,
   Upload,
   Workflow,
 } from "lucide-react"
-import { type ChangeEvent, useRef, useState } from "react"
+import { type ChangeEvent, type ReactNode, useEffect, useRef, useState } from "react"
 import { Button } from "../../components/ui/button"
 import { runSimulation, validateFlow } from "../../engine"
 import {
@@ -36,6 +39,39 @@ import { ScenarioLab } from "../scenario-lab/ScenarioLab"
 import { NewFlowDialog } from "./NewFlowDialog"
 
 const examples = [productViewedFlow, purchaseFlow, chatMessageFlow, bottleneckFlow]
+
+type ToolbarMenuKey = "workspaces" | "view" | "project"
+
+type ToolbarMenuItemProps = {
+  icon: ReactNode
+  label: string
+  description: string
+  disabled?: boolean
+  onSelect: () => void
+}
+
+function ToolbarMenuItem({
+  icon,
+  label,
+  description,
+  disabled = false,
+  onSelect,
+}: ToolbarMenuItemProps) {
+  return (
+    <button
+      className="toolbar-menu-item"
+      type="button"
+      disabled={disabled}
+      onClick={onSelect}
+    >
+      {icon}
+      <span>
+        <strong>{label}</strong>
+        <small>{description}</small>
+      </span>
+    </button>
+  )
+}
 
 export function FlowToolbar() {
   const graph = useFlowEditorStore((state) => state.graph)
@@ -57,11 +93,43 @@ export function FlowToolbar() {
   const [isReviewOpen, setReviewOpen] = useState(false)
   const [isDecisionsOpen, setDecisionsOpen] = useState(false)
   const [isBlueprintOpen, setBlueprintOpen] = useState(false)
+  const [openMenu, setOpenMenu] = useState<ToolbarMenuKey | null>(null)
   const importInputRef = useRef<HTMLInputElement>(null)
+  const actionsRef = useRef<HTMLDivElement>(null)
   const activeScenarioId = useFlowEditorStore((state) => state.activeScenarioId)
   const activeScenario = graph.failureScenarios?.find(
     (scenario) => scenario.id === activeScenarioId,
   )
+
+  useEffect(() => {
+    const closeOnPointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node)) return
+      if (!actionsRef.current?.contains(event.target)) setOpenMenu(null)
+    }
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpenMenu(null)
+    }
+
+    document.addEventListener("pointerdown", closeOnPointerDown)
+    document.addEventListener("keydown", closeOnEscape)
+    return () => {
+      document.removeEventListener("pointerdown", closeOnPointerDown)
+      document.removeEventListener("keydown", closeOnEscape)
+    }
+  }, [])
+
+  const toggleMenu = (menu: ToolbarMenuKey) => {
+    setOpenMenu((currentMenu) => (currentMenu === menu ? null : menu))
+  }
+
+  const closeMenus = () => setOpenMenu(null)
+
+  const deleteSelection = () => {
+    if (selectedNodeId) removeNodes([selectedNodeId])
+    if (selectedEdgeId) removeEdges([selectedEdgeId])
+    closeMenus()
+  }
 
   const exportFlow = () => {
     const blob = new Blob([JSON.stringify(graph, null, 2)], {
@@ -123,123 +191,189 @@ export function FlowToolbar() {
         </select>
         {isDirty && <span className="dirty">Saved locally</span>}
       </div>
-      <div className="actions">
+      <div className="actions" ref={actionsRef}>
         <Button
           variant="outline"
-          onClick={() => setNewFlowOpen(true)}
+          onClick={() => {
+            closeMenus()
+            setNewFlowOpen(true)
+          }}
           title="Create a new flow from design goals"
         >
           <FilePlus2 size={16} />
-          New flow
+          <span className="toolbar-button-label">New flow</span>
         </Button>
+
+        <div className="toolbar-menu">
+          <Button
+            variant="outline"
+            title="Open design workspaces"
+            aria-haspopup="menu"
+            aria-expanded={openMenu === "workspaces"}
+            onClick={() => toggleMenu("workspaces")}
+          >
+            <Layers size={16} />
+            <span className="toolbar-button-label">Workspaces</span>
+            <ChevronDown className="toolbar-chevron" size={14} />
+          </Button>
+          {openMenu === "workspaces" && (
+            <div className="toolbar-menu-popover">
+              <ToolbarMenuItem
+                icon={<GraduationCap size={16} />}
+                label="Learn"
+                description="Open the education guide"
+                onSelect={() => {
+                  closeMenus()
+                  window.location.href = "/education"
+                }}
+              />
+              <ToolbarMenuItem
+                icon={<FileJson2 size={16} />}
+                label="Contracts"
+                description="Define and edit data contracts"
+                onSelect={() => {
+                  closeMenus()
+                  setContractsOpen(true)
+                }}
+              />
+              <ToolbarMenuItem
+                icon={<Globe2 size={16} />}
+                label="Regions"
+                description="Create regions and assign nodes"
+                onSelect={() => {
+                  closeMenus()
+                  setRegionsOpen(true)
+                }}
+              />
+              <ToolbarMenuItem
+                icon={<FlaskConical size={16} />}
+                label="Scenario Lab"
+                description="Compare baseline and failure scenarios"
+                onSelect={() => {
+                  closeMenus()
+                  setScenarioLabOpen(true)
+                }}
+              />
+              <ToolbarMenuItem
+                icon={<ClipboardCheck size={16} />}
+                label="Review"
+                description="Run architecture review questions"
+                onSelect={() => {
+                  closeMenus()
+                  setReviewOpen(true)
+                }}
+              />
+              <ToolbarMenuItem
+                icon={<BookMarked size={16} />}
+                label="Decisions"
+                description="Capture assumptions and trade-offs"
+                onSelect={() => {
+                  closeMenus()
+                  setDecisionsOpen(true)
+                }}
+              />
+              <ToolbarMenuItem
+                icon={<FileText size={16} />}
+                label="Handoff pack"
+                description="Generate production readiness notes"
+                onSelect={() => {
+                  closeMenus()
+                  setBlueprintOpen(true)
+                }}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="toolbar-menu">
+          <Button
+            variant="outline"
+            title="Open view controls"
+            aria-haspopup="menu"
+            aria-expanded={openMenu === "view"}
+            onClick={() => toggleMenu("view")}
+          >
+            <PanelRight size={16} />
+            <span className="toolbar-button-label">View</span>
+            <ChevronDown className="toolbar-chevron" size={14} />
+          </Button>
+          {openMenu === "view" && (
+            <div className="toolbar-menu-popover toolbar-menu-popover--compact">
+              <ToolbarMenuItem
+                icon={<PanelRight size={16} />}
+                label={isInspectorOpen ? "Close inspector" : "Open inspector"}
+                description="Show or hide configuration controls"
+                onSelect={() => {
+                  closeMenus()
+                  setInspectorOpen(!isInspectorOpen)
+                }}
+              />
+              <ToolbarMenuItem
+                icon={<BarChart3 size={16} />}
+                label="Analysis"
+                description="Open validation and simulation results"
+                onSelect={() => {
+                  closeMenus()
+                  setAnalysisOpen(true)
+                }}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="toolbar-menu">
+          <Button
+            variant="outline"
+            title="Open project actions"
+            aria-haspopup="menu"
+            aria-expanded={openMenu === "project"}
+            onClick={() => toggleMenu("project")}
+          >
+            <FolderOpen size={16} />
+            <span className="toolbar-button-label">Project</span>
+            <ChevronDown className="toolbar-chevron" size={14} />
+          </Button>
+          {openMenu === "project" && (
+            <div className="toolbar-menu-popover toolbar-menu-popover--compact">
+              <ToolbarMenuItem
+                icon={<Download size={16} />}
+                label="Export"
+                description="Download this flow as JSON"
+                onSelect={() => {
+                  closeMenus()
+                  exportFlow()
+                }}
+              />
+              <ToolbarMenuItem
+                icon={<Upload size={16} />}
+                label="Import"
+                description="Load a System Flow project JSON"
+                onSelect={() => {
+                  closeMenus()
+                  importInputRef.current?.click()
+                }}
+              />
+              <ToolbarMenuItem
+                icon={<Trash2 size={16} />}
+                label="Delete selection"
+                description="Remove the selected node or edge"
+                disabled={!selectedNodeId && !selectedEdgeId}
+                onSelect={deleteSelection}
+              />
+            </div>
+          )}
+        </div>
+
         <Button
           variant="outline"
           onClick={() => {
-            window.location.href = "/education"
-          }}
-          title="Open the education guide"
-        >
-          <GraduationCap size={16} />
-          Learn
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => setContractsOpen(true)}
-          title="Open the data contract workspace"
-        >
-          <FileJson2 size={16} />
-          Contracts
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => setRegionsOpen(true)}
-          title="Create regions and assign nodes"
-        >
-          <Globe2 size={16} />
-          Regions
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => setReviewOpen(true)}
-          title="Run the architecture review"
-        >
-          <ClipboardCheck size={16} />
-          Review
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => setDecisionsOpen(true)}
-          title="Open decisions and assumptions"
-        >
-          <BookMarked size={16} />
-          Decisions
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => setBlueprintOpen(true)}
-          title="Generate the production readiness handoff pack"
-        >
-          <FileText size={16} />
-          Handoff pack
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => setInspectorOpen(!isInspectorOpen)}
-          title={isInspectorOpen ? "Close inspector" : "Open inspector"}
-        >
-          <PanelRight size={16} />
-          Inspector
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => setAnalysisOpen(true)}
-          title="Open simulation analysis"
-        >
-          <BarChart3 size={16} />
-          Analysis
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => setScenarioLabOpen(true)}
-          title="Compare normal operation and failure scenarios"
-        >
-          <FlaskConical size={16} />
-          Scenario Lab
-        </Button>
-        <Button
-          className="delete-action"
-          variant="outline"
-          disabled={!selectedNodeId && !selectedEdgeId}
-          onClick={() => {
-            if (selectedNodeId) removeNodes([selectedNodeId])
-            if (selectedEdgeId) removeEdges([selectedEdgeId])
-          }}
-          title="Delete selected node or connection"
-        >
-          <Trash2 size={16} />
-          Delete
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => {
+            closeMenus()
             setIssues(validateFlow(graph, nodeRegistry))
             setResult(null)
           }}
         >
           <CheckCircle2 size={16} />
-          Validate
-        </Button>
-        <Button variant="outline" onClick={exportFlow} title="Export flow">
-          <Download size={16} />
-          Export
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => importInputRef.current?.click()}
-          title="Import a System Flow project JSON"
-        >
-          <Upload size={16} />
-          Import
+          <span className="toolbar-button-label">Validate</span>
         </Button>
         <input
           ref={importInputRef}
@@ -252,6 +386,7 @@ export function FlowToolbar() {
         />
         <Button
           onClick={() => {
+            closeMenus()
             const result = runSimulation(graph, nodeRegistry, activeScenario)
             setIssues(result.warnings)
             setResult(result)
@@ -264,7 +399,9 @@ export function FlowToolbar() {
           }
         >
           <Play size={16} />
-          {activeScenario ? "Run scenario" : "Run simulation"}
+          <span className="toolbar-button-label">
+            {activeScenario ? "Run scenario" : "Run simulation"}
+          </span>
         </Button>
       </div>
       {isNewFlowOpen && <NewFlowDialog onClose={() => setNewFlowOpen(false)} />}
