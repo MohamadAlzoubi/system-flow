@@ -3,12 +3,10 @@ import type {
   FailureScenario,
   FlowGraph,
   NodeDefinition,
-  NodeInstance,
   NodeSimulationMetrics,
   NodeSimulationResult,
   QueueFrameMetrics,
   SimulationFrame,
-  SimulationRecommendation,
   SimulationResult,
   TrafficFrameMetrics,
   ValidationIssue,
@@ -19,141 +17,29 @@ import { applyFailureScenario } from "./apply-failure-scenario"
 import { classifyUserImpact } from "./classify-user-impact"
 import { estimateProductionReadiness } from "./estimate-readiness"
 import { evaluateGoals } from "./evaluate-goals"
+import { availabilityAt, averageAvailability } from "./simulation-availability"
+import {
+  createRandom,
+  effectiveTrafficRate,
+  nonnegativeOr,
+  normalSample,
+  number,
+  percentile,
+  positiveOr,
+  round,
+  seedFrom,
+} from "./simulation-math"
+import { recommendationsFor } from "./simulation-recommendations"
+import {
+  asynchronousInteractions,
+  type Contribution,
+  consumerParallelism,
+  isDeadLetterRoute,
+  mergeContributions,
+  routableEdges,
+  routingModeFor,
+} from "./simulation-routing"
 import { trafficRateAt } from "./traffic-pattern"
-
-const number = (value: unknown) => Number(value)
-const round = (value: number) => Number(value.toFixed(2))
-const finiteOr = (value: unknown, fallback: number) => {
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : fallback
-}
-const nonnegativeOr = (value: unknown, fallback: number) => {
-  const parsed = finiteOr(value, fallback)
-  return parsed >= 0 ? parsed : fallback
-}
-const positiveOr = (value: unknown, fallback: number) => {
-  const parsed = finiteOr(value, fallback)
-  return parsed > 0 ? parsed : fallback
-}
-// callerFacing marks paths still connected to the original caller; crossing an
-// asynchronous edge ends the caller's wait, so downstream latency is
-// processing lag rather than response time.
-type Contribution = { rate: number; latencyMs: number; callerFacing: boolean }
-
-// Caller latency ends where work is accepted for later processing.
-const asynchronousInteractions = new Set<FlowGraph["edges"][number]["interactionType"]>([
-  "async-command",
-  "published-event",
-  "stream",
-  "batch-transfer",
-  "realtime-push",
-])
-
-function isDeadLetterRoute(
-  edge: FlowGraph["edges"][number],
-  nodes: ReadonlyMap<string, NodeInstance>,
-): boolean {
-  return nodes.get(edge.toNodeId)?.type === "messaging.dead-letter-queue"
-}
-
-function routableEdges(
-  node: NodeInstance,
-  edges: FlowGraph["edges"],
-  nodes: ReadonlyMap<string, NodeInstance>,
-): FlowGraph["edges"] {
-  if (node.type !== "rabbitmq.queue") return edges
-  return edges.filter((edge) => !isDeadLetterRoute(edge, nodes))
-}
-
-function routingModeFor(
-  node: NodeInstance,
-  edges: FlowGraph["edges"],
-): NonNullable<NodeInstance["routingPolicy"]>["mode"] {
-  if (node.routingPolicy?.mode) return node.routingPolicy.mode
-  if (edges.some((edge) => edge.trafficPercentage !== undefined)) return "weighted"
-  if (node.type === "network.load-balancer" && edges.length > 1) return "round-robin"
-  return "broadcast"
-}
-
-function consumerParallelism(target: NodeInstance, result: NodeSimulationResult): number {
-  if (result.scaling) {
-    return Math.max(result.scaling.initialReplicas, result.scaling.desiredReplicas)
-  }
-  return Math.max(1, Math.floor(positiveOr(target.config.replicas, 1)))
-}
-
-function seedFrom(value: string): number {
-  let seed = 2166136261
-  for (const character of value) {
-    seed ^= character.charCodeAt(0)
-    seed = Math.imul(seed, 16777619)
-  }
-  return seed >>> 0
-}
-
-function createRandom(seed: number): () => number {
-  let state = seed || 1
-  return () => {
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0
-    return state / 4294967296
-  }
-}
-
-function normalSample(random: () => number): number {
-  const first = Math.max(random(), Number.EPSILON)
-  const second = random()
-  return Math.sqrt(-2 * Math.log(first)) * Math.cos(2 * Math.PI * second)
-}
-
-function percentile(values: number[], fraction: number): number {
-  const sorted = [...values].sort((left, right) => left - right)
-  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))]
-}
-
-function recommendationsFor(issues: ValidationIssue[]): SimulationRecommendation[] {
-  const messages: Record<string, string> = {
-    THROUGHPUT: "Increase capacity, replicas, or reduce upstream traffic.",
-    QUEUE_LOSS: "Increase consumer capacity, TTL, or queue storage.",
-    DATASTORE_SATURATION: "Increase the reported limiting datastore resource.",
-    REPLICATION_LAG: "Reduce replica load or improve replication capacity.",
-    CIRCUIT_OPEN: "Add failover capacity or reduce dependency failures.",
-    DEPENDENCY_REJECTION: "Raise dependency quota or bulkhead capacity.",
-    NETWORK_CONSTRAINT:
-      "Increase bandwidth, reduce payload size, or move services closer.",
-    CPU_SATURATION: "Increase CPU budget or reduce per-request compute.",
-    MEMORY_SATURATION: "Increase memory budget or reduce concurrency.",
-  }
-  return issues
-    .filter((issue) => messages[issue.code])
-    .map((issue) => ({
-      code: issue.code,
-      priority:
-        issue.code === "THROUGHPUT" || issue.code === "QUEUE_LOSS" ? "high" : "medium",
-      message: messages[issue.code],
-      nodeId: issue.nodeId,
-    }))
-}
-
-function effectiveTrafficRate(
-  baseline: number,
-  profile: FlowGraph["simulationProfile"],
-): number {
-  const peak = profile.peakRequestsPerSecond ?? baseline
-  const duration = Math.max(1, profile.durationSeconds)
-  const burst = Math.min(duration, Math.max(0, profile.burstDurationSeconds ?? 0))
-  const ramp = Math.min(duration - burst, Math.max(0, profile.rampUpSeconds ?? 0))
-  if (profile.trafficPattern === "burst") {
-    return (
-      (baseline * (duration - burst - ramp) +
-        peak * burst +
-        ((baseline + peak) / 2) * ramp) /
-      duration
-    )
-  }
-  if (profile.trafficPattern === "daily-peak") return baseline * 0.75 + peak * 0.25
-  if (profile.trafficPattern === "random") return (baseline + peak) / 2
-  return baseline
-}
 
 function retryOpportunities(
   elapsedSeconds: number,
@@ -172,67 +58,6 @@ function retryOpportunities(
     opportunities += 1
   }
   return opportunities
-}
-
-function availabilityAt(
-  node: NodeInstance,
-  timeSeconds: number,
-): { state: "online" | "offline" | "degraded" | "recovering"; factor: number } {
-  const policy = node.availabilityPolicy
-  if (!policy || policy.mode === "online") return { state: "online", factor: 1 }
-  if (policy.mode === "offline") return { state: "offline", factor: 0 }
-  if (policy.mode === "degraded") {
-    return { state: "degraded", factor: policy.degradedCapacityPercent / 100 }
-  }
-  const outageEnd = policy.offlineFromSeconds + policy.offlineDurationSeconds
-  if (timeSeconds < policy.offlineFromSeconds) return { state: "online", factor: 1 }
-  if (timeSeconds < outageEnd) return { state: "offline", factor: 0 }
-  if (policy.recoverySeconds > 0 && timeSeconds < outageEnd + policy.recoverySeconds) {
-    return {
-      state: "recovering",
-      factor: (timeSeconds - outageEnd) / policy.recoverySeconds,
-    }
-  }
-  return { state: "online", factor: 1 }
-}
-
-function averageAvailability(node: NodeInstance, durationSeconds: number): number {
-  const samples = Math.max(1, Math.min(300, durationSeconds))
-  let total = 0
-  for (let index = 0; index < samples; index += 1) {
-    total += availabilityAt(node, (index / samples) * durationSeconds).factor
-  }
-  return total / samples
-}
-
-function mergeContributions(
-  contributions: Contribution[],
-  mode: "sum" | "wait-all" | "first-response" | "asynchronous",
-): Contribution {
-  if (contributions.length === 0) return { rate: 0, latencyMs: 0, callerFacing: false }
-  const callerFacing = contributions.some((item) => item.callerFacing)
-  if (mode === "wait-all") {
-    return {
-      rate: Math.min(...contributions.map(({ rate }) => rate)),
-      latencyMs: Math.max(...contributions.map(({ latencyMs }) => latencyMs)),
-      callerFacing,
-    }
-  }
-  if (mode === "first-response") {
-    return {
-      rate: Math.max(...contributions.map(({ rate }) => rate)),
-      latencyMs: Math.min(...contributions.map(({ latencyMs }) => latencyMs)),
-      callerFacing,
-    }
-  }
-  return {
-    rate: contributions.reduce((sum, item) => sum + item.rate, 0),
-    latencyMs:
-      mode === "asynchronous"
-        ? 0
-        : Math.max(...contributions.map(({ latencyMs }) => latencyMs)),
-    callerFacing,
-  }
 }
 
 export function runSimulation(
