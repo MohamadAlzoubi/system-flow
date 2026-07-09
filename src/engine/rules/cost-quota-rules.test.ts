@@ -44,4 +44,30 @@ describe("cost and quota rules", () => {
       }),
     )
   })
+
+  it("checks cache memory cost against the assigned region budget", () => {
+    const graph = structuredClone(productViewedFlow)
+    const cache = graph.nodes.find((node) => node.type === "redis.cache")
+    if (!cache) throw new Error("Fixture requires a cache")
+    graph.boundaries = [
+      {
+        id: "region-eu",
+        label: "EU",
+        kind: "region",
+        regionCode: "eu-west-1",
+        resourceBudget: { cpuCores: 100, memoryMb: 100 },
+      },
+    ]
+    cache.boundaryId = "region-eu"
+    cache.config.maxMemoryMb = 80
+
+    const findings = evaluateRules(graph, nodeRegistry)
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        code: "COST_CACHE_MEMORY",
+        message: expect.stringContaining("EU region memory budget"),
+      }),
+    )
+  })
 })

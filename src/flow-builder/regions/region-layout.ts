@@ -6,16 +6,37 @@ import type {
 
 export const systemNodeWidth = 176
 export const systemNodeHeight = 64
+export const regionMinWidth = 520
+export const regionMinHeight = 320
 
 export function defaultRegionCanvasLayout(index: number): BoundaryCanvasLayout {
   return {
     position: {
-      x: 80 + (index % 2) * 600,
-      y: 80 + Math.floor(index / 2) * 380,
+      x: 80 + (index % 2) * 820,
+      y: 80 + Math.floor(index / 2) * 500,
     },
-    width: 520,
-    height: 300,
+    width: 720,
+    height: 420,
   }
+}
+
+export function initialRegionCanvasLayout(
+  index: number,
+  nodes: NodeInstance[],
+): BoundaryCanvasLayout {
+  const unassignedNodes = nodes.filter((node) => node.boundaryId === undefined)
+  const anchorNodes = unassignedNodes.length > 0 ? unassignedNodes : nodes
+  if (anchorNodes.length === 0) return defaultRegionCanvasLayout(index)
+
+  return regionCanvasLayout(
+    {
+      id: "new-region-preview",
+      label: "New region",
+      kind: "region",
+    },
+    index,
+    anchorNodes,
+  )
 }
 
 export function regionCanvasLayout(
@@ -33,8 +54,8 @@ export function regionCanvasLayout(
 
   return {
     position: { x: minX - 32, y: minY - 72 },
-    width: Math.max(360, maxX - minX + 64),
-    height: Math.max(220, maxY - minY + 104),
+    width: Math.max(regionMinWidth, maxX - minX + 64),
+    height: Math.max(regionMinHeight, maxY - minY + 104),
   }
 }
 

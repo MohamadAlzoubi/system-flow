@@ -1,0 +1,50 @@
+{
+  "name": "New",
+  "overview": {
+    "purpose": "Implement New.",
+    "goals": [],
+    "mainFlows": [],
+    "boundaries": []
+  },
+  "components": [],
+  "contracts": [],
+  "reliability": {
+    "timeouts": [],
+    "retries": [],
+    "idempotency": [],
+    "circuitBreakers": [],
+    "queues": [],
+    "failover": [],
+    "recovery": []
+  },
+  "developmentSequence": [],
+  "testPlan": [],
+  "risks": [
+    {
+      "category": "Validation findings",
+      "items": [
+        "Flow declares no architecture goals, so results cannot be compared with a requirement"
+      ]
+    }
+  ],
+  "handoff": {
+    "regionalTopology": [],
+    "criticalAssumptions": [],
+    "decisions": [],
+    "implementationTasks": [],
+    "loadTestPlan": [
+      "Run 300s at 100 events/s using the steady traffic pattern.",
+      "Decide and record the required peak traffic before load testing.",
+      "Use 1200-byte payloads and record CPU, memory, latency, drops, queue age, and provider rejections."
+    ],
+    "chaosTestPlan": [],
+    "observabilityChecklist": [
+      "Emit request/event rate, error rate, and latency for every synchronous component.",
+      "Emit queue depth, oldest-message age, expiration, dead-letter, and drain rate for every queue.",
+      "Emit datastore connection, IOPS, replica lag, and failover state.",
+      "Tag traces and logs with contract version, correlation key, region, scenario, and node id."
+    ],
+    "runbookOutline": [],
+    "rolloutSequence": []
+  }
+}

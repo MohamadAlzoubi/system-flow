@@ -167,12 +167,25 @@ export function AnalysisPanel() {
               </b>
               <b>
                 {result.resourceUsage.cpuCores}
-                <small>CPU cores</small>
+                <small>CPU total</small>
               </b>
               <b>
-                {result.resourceUsage.memoryMb} MB<small>memory</small>
+                {result.resourceUsage.memoryMb} MB<small>memory total</small>
               </b>
             </div>
+            {result.resourceUsage.scopes.length > 0 && (
+              <div className="resource-scopes">
+                <strong>Resource scopes</strong>
+                {result.resourceUsage.scopes.map((scope) => (
+                  <span key={scope.scopeId}>
+                    <b>{scope.label}</b>
+                    {scope.cpuCores}/{scope.cpuBudgetCores} CPU ·{" "}
+                    {scope.memoryMb.toLocaleString()}/
+                    {scope.memoryBudgetMb.toLocaleString()} MB
+                  </span>
+                ))}
+              </div>
+            )}
             {result.goalReport && <GoalReportSection report={result.goalReport} />}
             <ReadinessSection readiness={result.readiness} />
             {result.userImpact.length > 0 && (

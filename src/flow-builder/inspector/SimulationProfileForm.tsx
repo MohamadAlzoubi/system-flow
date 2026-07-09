@@ -223,7 +223,7 @@ export function SimulationProfileForm({ profile, onSave }: Props) {
         />
       </label>
       <label htmlFor="profile-cpu">
-        CPU budget (cores)
+        Fallback CPU budget (cores)
         <Input
           id="profile-cpu"
           type="number"
@@ -232,7 +232,7 @@ export function SimulationProfileForm({ profile, onSave }: Props) {
         />
       </label>
       <label htmlFor="profile-memory">
-        Memory budget (MB)
+        Fallback memory budget (MB)
         <Input
           id="profile-memory"
           type="number"

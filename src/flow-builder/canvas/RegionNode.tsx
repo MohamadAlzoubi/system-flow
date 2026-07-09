@@ -8,6 +8,8 @@ export type RegionNodeData = {
   regionCode: string
   owner?: string
   memberCount: number
+  cpuBudgetCores: number
+  memoryBudgetMb: number
   availabilityState: RegionAvailabilityState
 }
 
@@ -16,7 +18,7 @@ export type RegionFlowNode = Node<RegionNodeData, "regionNode">
 export function RegionNode({ data }: NodeProps<RegionFlowNode>) {
   return (
     <div className={`region-container region-${data.availabilityState}`}>
-      <div className="region-container-title">
+      <div className="region-container-title region-drag-handle">
         <Globe2 size={15} />
         <span>
           <strong>{data.label}</strong>
@@ -26,6 +28,9 @@ export function RegionNode({ data }: NodeProps<RegionFlowNode>) {
       </div>
       <div className="region-container-meta">
         <span>{data.memberCount} nodes</span>
+        <span>
+          {data.cpuBudgetCores} CPU · {data.memoryBudgetMb.toLocaleString()} MB
+        </span>
         {data.owner && <span>{data.owner}</span>}
       </div>
     </div>

@@ -1,0 +1,15 @@
+{
+  "id": "flow-58f422c6-a2ac-4fdd-9ec9-20aad5ce71b9",
+  "name": "New",
+  "nodes": [],
+  "edges": [],
+  "dataContracts": [],
+  "simulationProfile": {
+    "durationSeconds": 300,
+    "cpuCores": 8,
+    "memoryMb": 16000,
+    "networkLatencyMs": 5,
+    "requestsPerSecond": 100,
+    "trafficPattern": "steady"
+  }
+}

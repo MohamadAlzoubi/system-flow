@@ -31,7 +31,8 @@ A System Flow design has four important layers:
 1. **Data contracts** describe the shape, version, and estimated size of data.
 2. **Nodes** create, transform, queue, cache, store, broadcast, or reject that data.
 3. **Typed edges** describe where data travels and may add routing and network behavior.
-4. **The simulation profile** describes the load and resource budget applied to the graph.
+4. **The simulation profile** describes load and fallback resource budgets; regions can
+   declare their own capacity.
 
 The simulator is deterministic: the same graph and profile produce the same result. It
 walks reachable nodes in topological order. The visual left-to-right placement is for
@@ -192,8 +193,8 @@ get a better number, but you will not know why.
 | Payload size | Profile/contract-dependent | > 0 bytes | Network transfer capacity and latency |
 | Duplicate events | 0% when omitted | 0–100% | Repeated deliveries entering the model |
 | Malformed events | 0% when omitted | 0–100% | Invalid traffic considered by analysis |
-| CPU budget | Defined by example | > 0 cores | Available compute budget |
-| Memory budget | Defined by example | > 0 MB | Available memory budget |
+| Fallback CPU budget | Defined by example | > 0 cores | Compute budget for nodes without a regional budget |
+| Fallback memory budget | Defined by example | > 0 MB | Memory budget for nodes without a regional budget |
 | Network latency | Defined by example | ≥ 0 ms/hop | General cost added between nodes |
 | Observed latency | Empty | Optional, > 0 ms | Calibrates estimated latency to reality |
 | Observed throughput | Empty | Optional, > 0/s | Calibrates estimated throughput to reality |
@@ -1147,6 +1148,7 @@ the real world?
 | p95 / p99 | Tail latency: 95% / 99% of work is faster than this |
 | CPU cores | Aggregate modeled compute demand |
 | Memory | Aggregate modeled memory demand |
+| Resource scopes | Per-region or fallback demand compared with its budget |
 
 Average latency can look healthy while p95 is poor. Tail latency matters for user-facing
 systems because queues, jitter, retries, and slow dependencies affect a minority of

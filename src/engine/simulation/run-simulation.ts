@@ -12,6 +12,11 @@ import type {
   ValidationIssue,
 } from "../../contracts"
 import { resolveEdgeContract } from "../contracts/contract-versions"
+import {
+  activeResourceScopes,
+  addNodeResourceUsage,
+  emptyResourceScopes,
+} from "../resources/resource-scopes"
 import { validateFlow } from "../validation/validate-flow"
 import { applyFailureScenario } from "./apply-failure-scenario"
 import { classifyUserImpact } from "./classify-user-impact"
@@ -76,7 +81,7 @@ export function runSimulation(
       p99LatencyMs: 0,
       bottlenecks: [],
       warnings,
-      resourceUsage: { cpuCores: 0, memoryMb: 0 },
+      resourceUsage: { cpuCores: 0, memoryMb: 0, scopes: [] },
       nodeMetrics: [],
       edgeMetrics: [],
       timeline: [],
@@ -122,6 +127,7 @@ export function runSimulation(
   const edgeMetrics: EdgeSimulationMetrics[] = []
   let cpu = 0
   let memory = 0
+  const resourceScopes = emptyResourceScopes(graph)
   let endToEndLatency = 0
   let latencyVariance = 0
   let fallbackEvents = 0
@@ -363,6 +369,7 @@ export function runSimulation(
 
     cpu += result.cpuCores
     memory += result.memoryMb
+    addNodeResourceUsage(resourceScopes, node, graph, result.cpuCores, result.memoryMb)
     const pathLatency = merged.latencyMs + result.latencyMs + profile.networkLatencyMs
     if ((outgoing.get(nodeId) ?? []).length === 0 && merged.callerFacing) {
       endToEndLatency = Math.max(endToEndLatency, pathLatency)
@@ -1028,18 +1035,31 @@ export function runSimulation(
     }
   }
 
-  if (cpu > profile.cpuCores)
-    warnings.push({
-      severity: "warning",
-      code: "CPU_SATURATION",
-      message: `Estimated CPU ${cpu.toFixed(1)} cores exceeds ${profile.cpuCores}`,
-    })
-  if (memory > profile.memoryMb)
-    warnings.push({
-      severity: "warning",
-      code: "MEMORY_SATURATION",
-      message: `Estimated memory ${Math.round(memory)} MB exceeds ${profile.memoryMb} MB`,
-    })
+  const scopeUsage = activeResourceScopes(resourceScopes).map((scope) => ({
+    ...scope,
+    cpuCores: round(scope.cpuCores),
+    memoryMb: Math.round(scope.memoryMb),
+  }))
+  for (const scope of scopeUsage) {
+    const scopeLabel =
+      scope.scopeKind === "region" ? `${scope.label} region` : scope.label
+    const budgetLabel =
+      scope.scopeKind === "region" ? "region budget" : "simulation profile budget"
+    if (scope.cpuCores > scope.cpuBudgetCores) {
+      warnings.push({
+        severity: "warning",
+        code: "CPU_SATURATION",
+        message: `Estimated CPU ${scope.cpuCores.toFixed(1)} cores in ${scopeLabel} exceeds ${scope.cpuBudgetCores}-core ${budgetLabel}`,
+      })
+    }
+    if (scope.memoryMb > scope.memoryBudgetMb) {
+      warnings.push({
+        severity: "warning",
+        code: "MEMORY_SATURATION",
+        message: `Estimated memory ${scope.memoryMb.toLocaleString()} MB in ${scopeLabel} exceeds ${scope.memoryBudgetMb.toLocaleString()} MB ${budgetLabel}`,
+      })
+    }
+  }
 
   const random = createRandom(
     seedFrom(`${graph.id}:${profile.durationSeconds}:${profile.requestsPerSecond}`),
@@ -1215,7 +1235,11 @@ export function runSimulation(
       (issue) => issue.code === "THROUGHPUT" || issue.code.includes("SATURATION"),
     ),
     warnings,
-    resourceUsage: { cpuCores: round(cpu), memoryMb: Math.round(memory) },
+    resourceUsage: {
+      cpuCores: round(cpu),
+      memoryMb: Math.round(memory),
+      scopes: scopeUsage,
+    },
     nodeMetrics,
     edgeMetrics,
     timeline,

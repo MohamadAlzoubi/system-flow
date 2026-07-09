@@ -54,6 +54,18 @@ export function validateOwnership(
         message: `Boundary ${boundary.label} references a missing parent`,
       })
     }
+    if (
+      (boundary.resourceBudget?.cpuCores !== undefined &&
+        boundary.resourceBudget.cpuCores <= 0) ||
+      (boundary.resourceBudget?.memoryMb !== undefined &&
+        boundary.resourceBudget.memoryMb <= 0)
+    ) {
+      issues.push({
+        severity: "error",
+        code: "INVALID_RESOURCE_BUDGET",
+        message: `Boundary ${boundary.label} has an invalid resource budget`,
+      })
+    }
     const chain = new Set<string>([boundary.id])
     let parent = boundary.parentId ? boundaries.get(boundary.parentId) : undefined
     while (parent) {

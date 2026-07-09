@@ -7,18 +7,25 @@ import {
   MiniMap,
   type Node,
   type NodeChange,
+  Panel,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
 } from "@xyflow/react"
-import { useCallback, useEffect, useMemo } from "react"
+import { LocateFixed } from "lucide-react"
+import { useCallback, useEffect, useMemo, useRef } from "react"
 import "@xyflow/react/dist/style.css"
-import type { InteractionType } from "../../contracts"
+import type { BoundaryCanvasLayout, InteractionType } from "../../contracts"
 import { inferInteractionDefaults } from "../../engine"
 import { nodeRegistry } from "../../node-registry"
 import { useFlowEditorStore } from "../../store/flow-editor.store"
 import { nodeDragMimeType } from "../dnd"
-import { regionAtPosition, regionCanvasLayout } from "../regions/region-layout"
+import {
+  regionAtPosition,
+  regionCanvasLayout,
+  systemNodeHeight,
+  systemNodeWidth,
+} from "../regions/region-layout"
 import {
   type RegionAvailabilityState,
   type RegionFlowNode,
@@ -28,6 +35,10 @@ import { SystemNode } from "./SystemNode"
 
 const nodeTypes = { systemNode: SystemNode, regionNode: RegionNode }
 const regionNodePrefix = "architecture-region:"
+
+function regionIdFromFlowNodeId(id: string): string | undefined {
+  return id.startsWith(regionNodePrefix) ? id.slice(regionNodePrefix.length) : undefined
+}
 
 // Solid edges are synchronous; dashes mark asynchronous boundaries.
 const interactionDashes: Record<InteractionType, string | undefined> = {
@@ -69,9 +80,12 @@ function FlowCanvasInner() {
   const addEdge = useFlowEditorStore((state) => state.addEdge)
   const addNode = useFlowEditorStore((state) => state.addNode)
   const assignNodeToRegion = useFlowEditorStore((state) => state.assignNodeToRegion)
-  const { screenToFlowPosition } = useReactFlow()
+  const { fitView, screenToFlowPosition } = useReactFlow()
   const removeEdges = useFlowEditorStore((state) => state.removeEdges)
   const removeNodes = useFlowEditorStore((state) => state.removeNodes)
+  const setBoundaryCanvasLayout = useFlowEditorStore(
+    (state) => state.setBoundaryCanvasLayout,
+  )
   const setNodePosition = useFlowEditorStore((state) => state.setNodePosition)
   const setSelectedNode = useFlowEditorStore((state) => state.setSelectedNode)
   const setSelectedEdge = useFlowEditorStore((state) => state.setSelectedEdge)
@@ -119,6 +133,15 @@ function FlowCanvasInner() {
     () => new Map(result?.edgeMetrics.map((metric) => [metric.edgeId, metric])),
     [result],
   )
+  const regionDragStart = useRef<{
+    regionId: string
+    position: BoundaryCanvasLayout["position"]
+    memberPositions: Array<{
+      id: string
+      position: BoundaryCanvasLayout["position"]
+    }>
+  } | null>(null)
+  const previousNodeCount = useRef(graph.nodes.length)
   const regionLayouts = useMemo(
     () =>
       (graph.boundaries ?? [])
@@ -144,11 +167,14 @@ function FlowCanvasInner() {
         id: `${regionNodePrefix}${region.id}`,
         type: "regionNode",
         position: layout.position,
-        draggable: false,
+        draggable: true,
+        dragHandle: ".region-drag-handle",
         selectable: false,
         connectable: false,
         focusable: false,
-        zIndex: -1,
+        zIndex: 0,
+        initialWidth: layout.width,
+        initialHeight: layout.height,
         style: {
           width: layout.width,
           height: layout.height,
@@ -159,6 +185,10 @@ function FlowCanvasInner() {
           regionCode: region.regionCode?.trim() || region.id,
           owner: region.owner,
           memberCount: memberIds.length,
+          cpuBudgetCores:
+            region.resourceBudget?.cpuCores ?? graph.simulationProfile.cpuCores,
+          memoryBudgetMb:
+            region.resourceBudget?.memoryMb ?? graph.simulationProfile.memoryMb,
           availabilityState: regionAvailabilityState(memberIds, availabilityFrames),
         },
       }
@@ -168,7 +198,9 @@ function FlowCanvasInner() {
       type: "systemNode",
       position: node.position,
       selected: node.id === selectedNodeId,
-      zIndex: 1,
+      zIndex: 100,
+      initialWidth: systemNodeWidth,
+      initialHeight: systemNodeHeight,
       data: {
         nodeType: node.type,
         subtitle: String(node.config.eventType ?? node.config.queueName ?? ""),
@@ -192,6 +224,8 @@ function FlowCanvasInner() {
     datastoreFrames,
     graph.boundaries,
     graph.nodes,
+    graph.simulationProfile.cpuCores,
+    graph.simulationProfile.memoryMb,
     nodeMetrics,
     queueFrames,
     regionLayouts,
@@ -233,6 +267,19 @@ function FlowCanvasInner() {
   )
 
   useEffect(() => {
+    if (graph.nodes.length > previousNodeCount.current) {
+      window.requestAnimationFrame(() => {
+        fitView({
+          duration: 250,
+          padding: 0.18,
+          nodes: graph.nodes.map((node) => ({ id: node.id })),
+        })
+      })
+    }
+    previousNodeCount.current = graph.nodes.length
+  }, [fitView, graph.nodes])
+
+  useEffect(() => {
     const deleteSelection = (event: KeyboardEvent) => {
       if (event.key !== "Delete" && event.key !== "Backspace") return
       const target = event.target
@@ -255,14 +302,36 @@ function FlowCanvasInner() {
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
+      const nextRegionLayouts = new Map<string, BoundaryCanvasLayout>()
+      const currentRegionLayout = (regionId: string) =>
+        nextRegionLayouts.get(regionId) ??
+        regionLayouts.find((candidate) => candidate.id === regionId)?.layout
+
       for (const change of changes) {
-        if (change.type === "position" && change.position) {
-          setNodePosition(change.id, change.position)
+        const changeId = "id" in change ? change.id : undefined
+        if (!changeId) continue
+        const regionId = regionIdFromFlowNodeId(changeId)
+        if (regionId) {
+          const current = currentRegionLayout(regionId)
+          if (!current) continue
+          if (change.type === "position" && change.position) {
+            nextRegionLayouts.set(regionId, {
+              ...current,
+              position: change.position,
+            })
+          }
+          continue
         }
-        if (change.type === "remove") removeNodes([change.id])
+        if (change.type === "position" && change.position) {
+          setNodePosition(changeId, change.position)
+        }
+        if (change.type === "remove") removeNodes([changeId])
+      }
+      for (const [regionId, layout] of nextRegionLayouts) {
+        setBoundaryCanvasLayout(regionId, layout)
       }
     },
-    [removeNodes, setNodePosition],
+    [regionLayouts, removeNodes, setBoundaryCanvasLayout, setNodePosition],
   )
   const onEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
@@ -305,9 +374,48 @@ function FlowCanvasInner() {
     },
     [addNode, regionLayouts, screenToFlowPosition],
   )
+  const centerCanvas = useCallback(() => {
+    fitView({
+      duration: 300,
+      padding: 0.18,
+      nodes:
+        graph.nodes.length > 0 ? graph.nodes.map((node) => ({ id: node.id })) : undefined,
+    })
+  }, [fitView, graph.nodes])
+  const onNodeDragStart = useCallback(
+    (_event: MouseEvent | TouchEvent, flowNode: Node) => {
+      const regionId = regionIdFromFlowNodeId(flowNode.id)
+      if (!regionId) return
+      regionDragStart.current = {
+        regionId,
+        position: flowNode.position,
+        memberPositions: graph.nodes
+          .filter((node) => node.boundaryId === regionId)
+          .map((node) => ({ id: node.id, position: node.position })),
+      }
+    },
+    [graph.nodes],
+  )
   const onNodeDragStop = useCallback(
     (_event: MouseEvent | TouchEvent, flowNode: Node) => {
-      if (flowNode.id.startsWith(regionNodePrefix)) return
+      const regionId = regionIdFromFlowNodeId(flowNode.id)
+      if (regionId) {
+        const snapshot = regionDragStart.current
+        regionDragStart.current = null
+        if (!snapshot || snapshot.regionId !== regionId) return
+        const delta = {
+          x: flowNode.position.x - snapshot.position.x,
+          y: flowNode.position.y - snapshot.position.y,
+        }
+        if (delta.x === 0 && delta.y === 0) return
+        for (const member of snapshot.memberPositions) {
+          setNodePosition(member.id, {
+            x: member.position.x + delta.x,
+            y: member.position.y + delta.y,
+          })
+        }
+        return
+      }
       const graphNode = graph.nodes.find((node) => node.id === flowNode.id)
       if (!graphNode) return
 
@@ -323,7 +431,7 @@ function FlowCanvasInner() {
         assignNodeToRegion(graphNode.id, undefined)
       }
     },
-    [assignNodeToRegion, graph.boundaries, graph.nodes, regionLayouts],
+    [assignNodeToRegion, graph.boundaries, graph.nodes, regionLayouts, setNodePosition],
   )
 
   return (
@@ -335,11 +443,12 @@ function FlowCanvasInner() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onNodeDragStart={onNodeDragStart}
         onNodeDragStop={onNodeDragStop}
         onDragOver={onDragOver}
         onDrop={onDrop}
         onNodeClick={(_, node) => {
-          if (!node.id.startsWith(regionNodePrefix)) setSelectedNode(node.id)
+          if (!regionIdFromFlowNodeId(node.id)) setSelectedNode(node.id)
         }}
         onEdgeClick={(_, edge) => setSelectedEdge(edge.id)}
         onPaneClick={() => {
@@ -347,8 +456,15 @@ function FlowCanvasInner() {
           setSelectedEdge(null)
         }}
         deleteKeyCode={null}
+        zIndexMode="manual"
         fitView
       >
+        <Panel className="canvas-actions" position="top-right">
+          <button type="button" onClick={centerCanvas} title="Center graph">
+            <LocateFixed size={14} />
+            Center graph
+          </button>
+        </Panel>
         <Background gap={18} size={1} />
         <Controls />
         <MiniMap pannable />

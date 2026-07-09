@@ -45,7 +45,7 @@ export type SimulationResult = {
   p99LatencyMs: number
   bottlenecks: ValidationIssue[]
   warnings: ValidationIssue[]
-  resourceUsage: { cpuCores: number; memoryMb: number }
+  resourceUsage: ResourceUsage
   nodeMetrics: NodeSimulationMetrics[]
   edgeMetrics: EdgeSimulationMetrics[]
   timeline: SimulationFrame[]
@@ -53,6 +53,25 @@ export type SimulationResult = {
   readiness: ProductionReadinessMetrics
   goalReport?: GoalReport
   userImpact: UserImpactEntry[]
+}
+
+export type ResourceScopeKind = "simulation-profile" | "region"
+
+export type ResourceScopeUsage = {
+  scopeId: string
+  scopeKind: ResourceScopeKind
+  label: string
+  cpuCores: number
+  memoryMb: number
+  cpuBudgetCores: number
+  memoryBudgetMb: number
+  nodeIds: string[]
+}
+
+export type ResourceUsage = {
+  cpuCores: number
+  memoryMb: number
+  scopes: ResourceScopeUsage[]
 }
 
 export type ReadinessMetricEvidence = {

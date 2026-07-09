@@ -1,4 +1,11 @@
 import type { ArchitectureRule } from "../../contracts"
+import {
+  activeResourceScopes,
+  addNodeResourceUsage,
+  emptyResourceScopes,
+  regionBoundaryForNode,
+  resourceBudgetForBoundary,
+} from "../resources/resource-scopes"
 import type { RuleContext } from "./rule-helpers"
 
 const number = (value: unknown) => Number(value) || 0
@@ -6,16 +13,23 @@ const number = (value: unknown) => Number(value) || 0
 export function costQuotaRules(context: RuleContext): ArchitectureRule[] {
   const findings: ArchitectureRule[] = []
   const { graph, registry, sourceRatePerSecond } = context
-  let cpuCores = 0
-  let memoryMb = 0
+  const resourceScopes = emptyResourceScopes(graph)
+  const boundaries = new Map(
+    (graph.boundaries ?? []).map((boundary) => [boundary.id, boundary]),
+  )
 
   for (const node of graph.nodes) {
     const result = registry.get(node.type)?.simulate(node.config, {
       profile: graph.simulationProfile,
       ratePerSecond: sourceRatePerSecond,
     })
-    cpuCores += result?.cpuCores ?? 0
-    memoryMb += result?.memoryMb ?? 0
+    addNodeResourceUsage(
+      resourceScopes,
+      node,
+      graph,
+      result?.cpuCores ?? 0,
+      result?.memoryMb ?? 0,
+    )
 
     if (node.type === "external.api") {
       const quotaCapacity = Math.min(
@@ -60,15 +74,18 @@ export function costQuotaRules(context: RuleContext): ArchitectureRule[] {
       }
     }
 
+    const region = regionBoundaryForNode(node, boundaries)
+    const memoryBudget = resourceBudgetForBoundary(region, graph).memoryBudgetMb
     if (
       node.type === "redis.cache" &&
-      number(node.config.maxMemoryMb) > graph.simulationProfile.memoryMb * 0.5
+      number(node.config.maxMemoryMb) > memoryBudget * 0.5
     ) {
+      const budgetOwner = region ? `${region.label} region` : "flow"
       findings.push({
         code: "COST_CACHE_MEMORY",
         category: "cost",
         severity: "warning",
-        message: `${node.id} reserves ${number(node.config.maxMemoryMb).toLocaleString()} MB, more than half the flow memory budget`,
+        message: `${node.id} reserves ${number(node.config.maxMemoryMb).toLocaleString()} MB, more than half the ${budgetOwner} memory budget`,
         rationale:
           "Large cache allocations are a direct cost driver and may hide an unbounded keyspace or overly long TTL.",
         affectedIds: [node.id],
@@ -121,35 +138,41 @@ export function costQuotaRules(context: RuleContext): ArchitectureRule[] {
     }
   }
 
-  if (cpuCores > graph.simulationProfile.cpuCores) {
-    findings.push({
-      code: "COST_CPU_BUDGET",
-      category: "cost",
-      severity: "warning",
-      message: `Configured workload estimates ${cpuCores.toFixed(1)} CPU cores against a ${graph.simulationProfile.cpuCores}-core budget`,
-      rationale:
-        "CPU above the declared budget is both a saturation risk and an unplanned compute-cost increase.",
-      affectedIds: [],
-      suggestedActions: [
-        "Raise the explicit CPU budget or reduce per-event compute cost.",
-        "Measure CPU per event in a load test before committing capacity.",
-      ],
-    })
-  }
-  if (memoryMb > graph.simulationProfile.memoryMb) {
-    findings.push({
-      code: "COST_MEMORY_BUDGET",
-      category: "cost",
-      severity: "warning",
-      message: `Configured workload estimates ${Math.round(memoryMb).toLocaleString()} MB against a ${graph.simulationProfile.memoryMb.toLocaleString()} MB budget`,
-      rationale:
-        "Memory reservations above budget increase instance size and can create abrupt out-of-memory failures.",
-      affectedIds: [],
-      suggestedActions: [
-        "Raise the memory budget or reduce cache and concurrency allocations.",
-        "Measure peak resident memory during load and failure tests.",
-      ],
-    })
+  for (const scope of activeResourceScopes(resourceScopes)) {
+    const scopeLabel =
+      scope.scopeKind === "region" ? `${scope.label} region` : scope.label
+    const budgetLabel =
+      scope.scopeKind === "region" ? "region budget" : "simulation profile budget"
+    if (scope.cpuCores > scope.cpuBudgetCores) {
+      findings.push({
+        code: "COST_CPU_BUDGET",
+        category: "cost",
+        severity: "warning",
+        message: `Configured workload estimates ${scope.cpuCores.toFixed(1)} CPU cores in ${scopeLabel} against a ${scope.cpuBudgetCores}-core ${budgetLabel}`,
+        rationale:
+          "CPU above the declared budget is both a saturation risk and an unplanned compute-cost increase.",
+        affectedIds: scope.nodeIds,
+        suggestedActions: [
+          "Raise the explicit CPU budget for the saturated scope or reduce per-event compute cost.",
+          "Measure CPU per event in a load test before committing capacity.",
+        ],
+      })
+    }
+    if (scope.memoryMb > scope.memoryBudgetMb) {
+      findings.push({
+        code: "COST_MEMORY_BUDGET",
+        category: "cost",
+        severity: "warning",
+        message: `Configured workload estimates ${Math.round(scope.memoryMb).toLocaleString()} MB in ${scopeLabel} against a ${scope.memoryBudgetMb.toLocaleString()} MB ${budgetLabel}`,
+        rationale:
+          "Memory reservations above budget increase instance size and can create abrupt out-of-memory failures.",
+        affectedIds: scope.nodeIds,
+        suggestedActions: [
+          "Raise the explicit memory budget for the saturated scope or reduce cache and concurrency allocations.",
+          "Measure peak resident memory during load and failure tests.",
+        ],
+      })
+    }
   }
 
   for (const edge of graph.edges) {

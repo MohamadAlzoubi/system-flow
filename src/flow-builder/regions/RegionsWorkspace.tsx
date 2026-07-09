@@ -6,7 +6,7 @@ import { nodeRegistry } from "../../node-registry"
 import { useFlowEditorStore } from "../../store/flow-editor.store"
 import { RegionEditorForm } from "./RegionEditorForm"
 import {
-  defaultRegionCanvasLayout,
+  initialRegionCanvasLayout,
   nextPositionInRegion,
   regionCanvasLayout,
 } from "./region-layout"
@@ -15,7 +15,11 @@ function regionCode(region: ArchitectureBoundary): string {
   return region.regionCode?.trim() || region.id
 }
 
-function newRegion(existing: ArchitectureBoundary[]): ArchitectureBoundary {
+function newRegion(
+  existing: ArchitectureBoundary[],
+  nodes: NodeInstance[],
+  resourceBudget: NonNullable<ArchitectureBoundary["resourceBudget"]>,
+): ArchitectureBoundary {
   const regionCount = existing.filter((boundary) => boundary.kind === "region").length
   let index = regionCount + 1
   let code = `region-${index}`
@@ -31,7 +35,8 @@ function newRegion(existing: ArchitectureBoundary[]): ArchitectureBoundary {
     label: `Region ${index}`,
     kind: "region",
     regionCode: code,
-    canvasLayout: defaultRegionCanvasLayout(regionCount),
+    resourceBudget,
+    canvasLayout: initialRegionCanvasLayout(regionCount, nodes),
   }
 }
 
@@ -58,6 +63,9 @@ export function RegionsWorkspace({ onClose }: Props) {
   const regionMembers = selectedRegion
     ? graph.nodes.filter((node) => node.boundaryId === selectedRegion.id)
     : []
+  const selectedRegionIndex = selectedRegion
+    ? regions.findIndex((region) => region.id === selectedRegion.id)
+    : -1
   const parentOptions = (graph.boundaries ?? []).filter(
     (boundary) => boundary.id !== selectedRegion?.id && boundary.kind !== "region",
   )
@@ -70,8 +78,18 @@ export function RegionsWorkspace({ onClose }: Props) {
     return () => window.removeEventListener("keydown", closeOnEscape)
   }, [onClose])
 
+  useEffect(() => {
+    if (selectedRegionId && regions.some((region) => region.id === selectedRegionId)) {
+      return
+    }
+    setSelectedRegionId(regions[0]?.id ?? null)
+  }, [regions, selectedRegionId])
+
   const createRegion = () => {
-    const region = newRegion(graph.boundaries ?? [])
+    const region = newRegion(graph.boundaries ?? [], graph.nodes, {
+      cpuCores: graph.simulationProfile.cpuCores,
+      memoryMb: graph.simulationProfile.memoryMb,
+    })
     upsertBoundary(region)
     setSelectedRegionId(region.id)
   }
@@ -134,7 +152,7 @@ export function RegionsWorkspace({ onClose }: Props) {
         </div>
         <div className="contract-columns">
           <aside className="contract-list">
-            <Button variant="outline" onClick={createRegion}>
+            <Button type="button" variant="outline" onClick={createRegion}>
               <FilePlus2 size={14} />
               New region
             </Button>
@@ -151,7 +169,9 @@ export function RegionsWorkspace({ onClose }: Props) {
                 >
                   <strong>{region.label}</strong>
                   <small>
-                    {regionCode(region)} · {memberCount} nodes
+                    {regionCode(region)} · {memberCount} nodes ·{" "}
+                    {region.resourceBudget?.cpuCores ?? graph.simulationProfile.cpuCores}{" "}
+                    CPU
                   </small>
                 </button>
               )
@@ -167,15 +187,25 @@ export function RegionsWorkspace({ onClose }: Props) {
               <RegionEditorForm
                 key={selectedRegion.id}
                 region={selectedRegion}
+                canvasLayout={regionCanvasLayout(
+                  selectedRegion,
+                  selectedRegionIndex,
+                  regionMembers,
+                )}
                 parentOptions={parentOptions}
+                fallbackBudget={{
+                  cpuCores: graph.simulationProfile.cpuCores,
+                  memoryMb: graph.simulationProfile.memoryMb,
+                }}
                 onSave={upsertBoundary}
               />
               <div className="contract-actions">
-                <Button variant="outline" onClick={createOutageScenario}>
+                <Button type="button" variant="outline" onClick={createOutageScenario}>
                   <Zap size={14} />
                   Add shutdown scenario
                 </Button>
                 <Button
+                  type="button"
                   className="delete-action"
                   variant="outline"
                   onClick={() => {
@@ -221,8 +251,8 @@ export function RegionsWorkspace({ onClose }: Props) {
             </div>
           ) : (
             <p className="goal-hint">
-              Regions group nodes for deployment placement and region-unavailable
-              simulations.
+              Regions group nodes for deployment placement, resource budgets, and
+              region-unavailable simulations.
             </p>
           )}
         </div>

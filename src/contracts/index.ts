@@ -8,6 +8,7 @@ export type {
   DataClassification,
   ImplementationStatus,
   NodeResponsibility,
+  ResourceBudget,
   StateOwnership,
 } from "./architecture-boundary"
 export type {
@@ -87,6 +88,9 @@ export type {
   QueueSimulationMetrics,
   ReadinessMetricEvidence,
   ResilienceFrameMetrics,
+  ResourceScopeKind,
+  ResourceScopeUsage,
+  ResourceUsage,
   ScenarioBatchEntry,
   ScenarioBatchResult,
   ServiceFrameMetrics,

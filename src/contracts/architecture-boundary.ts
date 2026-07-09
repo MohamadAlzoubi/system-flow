@@ -12,6 +12,11 @@ export type BoundaryCanvasLayout = {
   height: number
 }
 
+export type ResourceBudget = {
+  cpuCores?: number
+  memoryMb?: number
+}
+
 /** Architectural metadata grouping nodes, never free-form diagram decoration. */
 export type ArchitectureBoundary = {
   id: string
@@ -21,6 +26,8 @@ export type ArchitectureBoundary = {
   owner?: string
   /** Stable region identifier used by node placement and edge network policies. */
   regionCode?: string
+  /** Optional compute and memory budget for deployment scopes such as regions. */
+  resourceBudget?: ResourceBudget
   /** Optional canvas placement for architectural containers such as regions. */
   canvasLayout?: BoundaryCanvasLayout
 }

@@ -186,6 +186,23 @@ describe("validateOwnership", () => {
     )
   })
 
+  it("rejects non-positive boundary resource budgets", () => {
+    const graph = structuredClone(productViewedFlow)
+    graph.boundaries = [
+      {
+        id: "region-a",
+        label: "US primary",
+        kind: "region",
+        regionCode: "us-east-1",
+        resourceBudget: { cpuCores: 0, memoryMb: 16000 },
+      },
+    ]
+
+    expect(validateOwnership(graph, nodeRegistry)).toContainEqual(
+      expect.objectContaining({ code: "INVALID_RESOURCE_BUDGET", severity: "error" }),
+    )
+  })
+
   it("warns when node region placement disagrees with deployment region", () => {
     const graph = structuredClone(productViewedFlow)
     graph.boundaries = [

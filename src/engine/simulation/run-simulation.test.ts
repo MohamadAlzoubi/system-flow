@@ -36,6 +36,51 @@ describe("runSimulation", () => {
     )
   })
 
+  it("checks CPU saturation against regional budgets before profile fallback", () => {
+    const graph = structuredClone(productViewedFlow)
+    graph.simulationProfile.cpuCores = 0.1
+    graph.boundaries = [
+      {
+        id: "region-eu",
+        label: "EU",
+        kind: "region",
+        regionCode: "eu-west-1",
+        resourceBudget: { cpuCores: 100, memoryMb: 100000 },
+      },
+      {
+        id: "region-us",
+        label: "US",
+        kind: "region",
+        regionCode: "us-east-1",
+        resourceBudget: { cpuCores: 100, memoryMb: 100000 },
+      },
+    ]
+    graph.nodes = graph.nodes.map((node, index) => ({
+      ...node,
+      boundaryId: index % 2 === 0 ? "region-eu" : "region-us",
+    }))
+
+    const regional = runSimulation(graph, nodeRegistry)
+
+    expect(regional.resourceUsage.cpuCores).toBeGreaterThan(
+      graph.simulationProfile.cpuCores,
+    )
+    expect(regional.resourceUsage.scopes).toHaveLength(2)
+    expect(regional.warnings).not.toContainEqual(
+      expect.objectContaining({ code: "CPU_SATURATION" }),
+    )
+
+    graph.boundaries[0].resourceBudget = { cpuCores: 0.01, memoryMb: 100000 }
+    const saturated = runSimulation(graph, nodeRegistry)
+
+    expect(saturated.warnings).toContainEqual(
+      expect.objectContaining({
+        code: "CPU_SATURATION",
+        message: expect.stringContaining("EU region"),
+      }),
+    )
+  })
+
   it("splits traffic by edge percentage and constrains overloaded output", () => {
     const graph = structuredClone(productViewedFlow)
     graph.nodes = [graph.nodes[0], graph.nodes[5], graph.nodes[6]]
